@@ -1366,4 +1366,4 @@ class _ClaimScreenState extends State<ClaimScreen> {
 }
 
 
-// Refined layout constraints
+// Code style alignment
