@@ -1366,4 +1366,4 @@ class _ClaimScreenState extends State<ClaimScreen> {
 }
 
 
-// Logic optimization
+// Refined layout constraints
