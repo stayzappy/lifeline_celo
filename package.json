@@ -1,0 +1,29 @@
+{
+    "name":  "lifeline",
+    "version":  "1.0.0",
+    "description":  "A new Flutter project.",
+    "main":  "index.js",
+    "directories":  {
+                        "lib":  "lib"
+                    },
+    "scripts":  {
+                    "test":  "echo \"Error: no test specified\" \u0026\u0026 exit 1",
+                    "daily":  "node scripts/daily-report.js",
+                    "benchmark":  "node scripts/benchmark.js",
+                    "ecosystem":  "node scripts/ecosystem.js",
+                    "deploylog":  "node scripts/deploy-log.js"
+                },
+    "repository":  {
+                       "type":  "git",
+                       "url":  "git+https://github.com/stayzappy/lifeline_celo.git"
+                   },
+    "keywords":  [
+
+                 ],
+    "author":  "",
+    "license":  "ISC",
+    "bugs":  {
+                 "url":  "https://github.com/stayzappy/lifeline_celo/issues"
+             },
+    "homepage":  "https://github.com/stayzappy/lifeline_celo#readme"
+}

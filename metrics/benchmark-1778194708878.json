@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-05-07T22:58:28.877Z",
+  "rpcLatencyMs": 87,
+  "contractCalls": 346,
+  "avgGasUsed": 52304,
+  "memoryUsage": {
+    "rss": 34463744,
+    "heapTotal": 5537792,
+    "heapUsed": 3831832,
+    "external": 1208756,
+    "arrayBuffers": 10515
+  }
+}
