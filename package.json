@@ -11,7 +11,11 @@
                     "daily":  "node scripts/daily-report.js",
                     "benchmark":  "node scripts/benchmark.js",
                     "ecosystem":  "node scripts/ecosystem.js",
-                    "deploylog":  "node scripts/deploy-log.js"
+                    "deploylog":  "node scripts/deploy-log.js",
+                    "fluttermetrics":  "node scripts/flutter-metrics.js",
+                    "gitmetrics":  "node scripts/git-metrics.js",
+                    "celometrics":  "node scripts/celo-metrics.js",
+                    "report":  "node scripts/generate-report.js"
                 },
     "repository":  {
                        "type":  "git",
