@@ -14,7 +14,7 @@ const analytics = {
   totalCommits: safe("git rev-list --count HEAD"),
   branch: safe("git branch --show-current"),
   lastCommit: safe("git log -1 --pretty=%B"),
-  trackedFiles: safe("git ls-files | wc -l"),
+  trackedFiles: safe('git ls-files').split('\n').length,
 };
 
 fs.writeFileSync(
