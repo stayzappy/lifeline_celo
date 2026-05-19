@@ -29,7 +29,6 @@ bool isMiniPay() {
   return js_util.getProperty(ethereum!, 'isMiniPay') == true;
 }
 
-// ✅ FIX: Enhanced URL parser that accurately decodes the payload
 Map<String, String> parseWebUrlParams() {
   final url = web.window.location.href;
   final uri = Uri.parse(url);
@@ -39,7 +38,6 @@ Map<String, String> parseWebUrlParams() {
   
   if (uri.hasFragment && uri.fragment.contains('?')) {
     final fragmentQuery = uri.fragment.substring(uri.fragment.indexOf('?') + 1);
-    // splitQueryString automatically decodes URL-encoded Base64 strings safely!
     params.addAll(Uri.splitQueryString(fragmentQuery));
   }
   return params;
@@ -94,7 +92,7 @@ class _KeyboardScrollWrapperState extends State<KeyboardScrollWrapper> {
 }
 
 // ==============================================================
-// LIVE COUNTDOWN TIMER WIDGET (WITH AUTO-DISPATCH)
+// LIVE COUNTDOWN TIMER WIDGET
 // ==============================================================
 class LiveTimer extends StatefulWidget {
   final int unlockTimeEpoch;
@@ -154,14 +152,14 @@ class _LiveTimerState extends State<LiveTimer> {
 // ==============================================================
 class AppConstants {
   static const String appSecret = "LIFELINE_CELO_HACKATHON_2026_SECRET_KEY";
-  static const String rpcUrl = "https://forno.celo-sepolia.celo-testnet.org";
-  static const int chainId = 11142220; 
+  static const String rpcUrl = "https://celo-mainnet.g.alchemy.com/v2/iC-kygJ7M4B-sdyiSfBup";
+  static const int chainId = 42220; 
   
   static const String lifeLineContract = "0x4ceb4f21b69cba6c67c03f17c56a5c42e51b4bc1"; 
   
   static final Map<String, Map<String, dynamic>> tokens = {
-    'CELO': {'address': '0xf194afdf50b03e69bd7d057c1aa5e100288e33bc', 'decimals': 18},
-    'USDC': {'address': '0x01c5c0122039549ad1493b8220cabedd739bc44e', 'decimals': 6},
+    'CELO': {'address': '0x471EcE3750Da237f93B8E339c536989b8978a438', 'decimals': 18},
+    'USDC': {'address': '0xcebA9300f2b948710d2653dD7B07f33A8B32118C', 'decimals': 6},
   };
 
   static const String emailServiceId = "service_vn7cori";
@@ -275,32 +273,52 @@ class CeloWalletProvider extends ChangeNotifier {
       loadingStatus = "Connecting Web3...";
       notifyListeners();
 
+      debugPrint('🔥 TRACE: Beginning Wallet Connection...');
       if (ethereum == null) throw Exception("No Web3 provider found.");
 
+      debugPrint('🔥 TRACE: Requesting Accounts via JS Interop...');
       final JSObject args = js_util.jsify({'method': 'eth_requestAccounts'});
       final JSPromise promise = js_util.callMethod(ethereum!, 'request', [args]);
-      final result = await js_util.promiseToFuture(promise);
+      
+      // FIX: Added timeout to prevent hanging if the wallet ignores the request
+      final result = await js_util.promiseToFuture(promise).timeout(const Duration(seconds: 15), onTimeout: () {
+        throw Exception("Wallet connection timed out. Please check your extension/app.");
+      });
       
       final List<dynamic> accounts = result as List<dynamic>;
       if (accounts.isEmpty) throw Exception("Connection rejected.");
       
       userAddress = accounts.first.toString().toLowerCase();
       isConnected = true;
+      debugPrint('🔥 TRACE: Connected successfully as $userAddress');
 
       if (!isMiniPay()) {
+        debugPrint('🔥 TRACE: Validating Celo Mainnet connection (ChainID: ${AppConstants.chainId})...');
         try {
           final switchArgs = js_util.jsify({
             'method': 'wallet_switchEthereumChain',
             'params': [{'chainId': '0x${AppConstants.chainId.toRadixString(16)}'}]
           });
-          await js_util.promiseToFuture(js_util.callMethod(ethereum!, 'request', [switchArgs]));
-        } catch (_) {} 
+          // FIX: Timeout aggressively to prevent wallet silence from locking the UI
+          await js_util.promiseToFuture(js_util.callMethod(ethereum!, 'request', [switchArgs]))
+            .timeout(const Duration(seconds: 3));
+          debugPrint('🔥 TRACE: Network Switch Request Completed.');
+        } catch (e) {
+          debugPrint('🔥 TRACE: Network Switch Bypassed/Failed: $e. Proceeding anyway.');
+        } 
+      } else {
+         debugPrint('🔥 TRACE: MiniPay detected, bypassing network switch.');
       }
 
+      debugPrint('🔥 TRACE: Calling refreshBalances()...');
       await refreshBalances();
+      debugPrint('🔥 TRACE: Connection sequence entirely complete.');
+
     } catch (e) {
+      debugPrint('🔥 TRACE: connectWallet Error Captured: $e');
       errorMessage = e.toString().replaceAll('Exception:', '').trim();
     } finally {
+      debugPrint('🔥 TRACE: Releasing UI Loader Lock...');
       isLoading = false;
       notifyListeners();
     }
@@ -309,26 +327,37 @@ class CeloWalletProvider extends ChangeNotifier {
   Future<void> refreshBalances() async {
     if (userAddress == null) return;
     try {
+      debugPrint('🔥 TRACE: Fetching CELO balance...');
       final address = EthereumAddress.fromHex(userAddress!, enforceEip55: false);
-      final celoBal = await _web3client.getBalance(address);
+      
+      // FIX: Alchemy RPC streams can hang on Web. Enforced hard timeout.
+      final celoBal = await _web3client.getBalance(address).timeout(const Duration(seconds: 10));
       tokenBalances['CELO'] = celoBal.getValueInUnit(EtherUnit.ether);
+      debugPrint('🔥 TRACE: CELO balance retrieved: ${tokenBalances['CELO']}');
 
+      debugPrint('🔥 TRACE: Fetching USDC balance...');
       final usdcAddr = EthereumAddress.fromHex(AppConstants.tokens['USDC']!['address'], enforceEip55: false);
       final contract = DeployedContract(ContractAbi.fromJson(_erc20Abi, 'ERC20'), usdcAddr);
       final balanceOfFunc = contract.function('balanceOf');
       
-      final usdcResponse = await _web3client.call(contract: contract, function: balanceOfFunc, params: [address]);
+      final usdcResponse = await _web3client.call(contract: contract, function: balanceOfFunc, params: [address])
+        .timeout(const Duration(seconds: 10));
+        
       if (usdcResponse.isNotEmpty) {
         final rawUsdc = usdcResponse.first as BigInt;
         final decimals = AppConstants.tokens['USDC']!['decimals'] as int;
         tokenBalances['USDC'] = rawUsdc / BigInt.from(pow(10, decimals));
+        debugPrint('🔥 TRACE: USDC balance retrieved: ${tokenBalances['USDC']}');
       }
 
       if (!AppConstants.lifeLineContract.contains("CHANGE_THIS")) {
+        debugPrint('🔥 TRACE: Fetching User Vaults...');
         await fetchUserVaults();
+      } else {
+        debugPrint('🔥 TRACE: Vault fetch skipped. Contract address is still a placeholder.');
       }
     } catch (e) {
-      debugPrint('🔥 TRACE: Sync failed: $e');
+      debugPrint('🔥 TRACE: refreshBalances() Sync failed or timed out: $e');
     }
   }
 
@@ -339,44 +368,69 @@ class CeloWalletProvider extends ChangeNotifier {
       final counterFunc = llContract.function('vaultCounter');
       final getVaultFunc = llContract.function('getVault');
       
-      final counterRes = await _web3client.call(contract: llContract, function: counterFunc, params: []);
+      final counterRes = await _web3client.call(contract: llContract, function: counterFunc, params: []).timeout(const Duration(seconds: 10));
       final totalVaults = (counterRes.first as BigInt).toInt();
+      debugPrint('🔥 TRACE: Global Vault Counter: $totalVaults');
 
       List<Map<String, dynamic>> fetchedVaults = [];
-
-      for (int i = 1; i <= totalVaults; i++) {
-        final vaultRes = await _web3client.call(contract: llContract, function: getVaultFunc, params: [BigInt.from(i)]);
-        final vaultData = vaultRes.first as List<dynamic>; 
+      
+      // 🚀 THE FIX: Batch processing 20 vaults at a time to prevent rate limits
+      const int chunkSize = 20; 
+      for (int i = 1; i <= totalVaults; i += chunkSize) {
+        final end = (i + chunkSize - 1 > totalVaults) ? totalVaults : i + chunkSize - 1;
+        debugPrint('🔥 TRACE: Fetching vaults $i to $end...');
         
-        final owner = vaultData[0].toString().toLowerCase();
-        final isActive = vaultData[7] as bool;
+        List<Future<void>> futures = [];
+        for (int j = i; j <= end; j++) {
+          futures.add(() async {
+            try {
+              // Increased timeout slightly for mainnet latency
+              final vaultRes = await _web3client.call(contract: llContract, function: getVaultFunc, params: [BigInt.from(j)]).timeout(const Duration(seconds: 8));
+              final vaultData = vaultRes.first as List<dynamic>; 
+              
+              final owner = vaultData[0].toString().toLowerCase();
+              final isActive = vaultData[7] as bool;
 
-        if (owner == userAddress && isActive) {
-          final tokenHex = vaultData[3].toString().toLowerCase();
-          String symbol = "Unknown";
-          int decimals = 18;
-          
-          if (tokenHex == AppConstants.tokens['USDC']!['address']) { symbol = "USDC"; decimals = 6; }
-          else if (tokenHex == AppConstants.tokens['CELO']!['address']) { symbol = "CELO"; decimals = 18; }
+              if (owner == userAddress && isActive) {
+                final tokenHex = vaultData[3].toString().toLowerCase();
+                String symbol = "Unknown";
+                int decimals = 18;
+                
+                if (tokenHex == AppConstants.tokens['USDC']!['address'].toLowerCase()) { symbol = "USDC"; decimals = 6; }
+                else if (tokenHex == AppConstants.tokens['CELO']!['address'].toLowerCase()) { symbol = "CELO"; decimals = 18; }
 
-          final rawBalance = vaultData[4] as BigInt;
-          final formattedBalance = rawBalance / BigInt.from(pow(10, decimals));
+                final rawBalance = vaultData[4] as BigInt;
+                final formattedBalance = rawBalance / BigInt.from(pow(10, decimals));
 
-          fetchedVaults.add({
-            'id': i,
-            'heir': vaultData[1].toString(),
-            'tokenSymbol': symbol,
-            'balance': formattedBalance,
-            'unlockTime': (vaultData[5] as BigInt).toInt(),
-            'duration': (vaultData[6] as BigInt).toInt(),
-          });
+                fetchedVaults.add({
+                  'id': j,
+                  'heir': vaultData[1].toString(),
+                  'tokenSymbol': symbol,
+                  'balance': formattedBalance,
+                  'unlockTime': (vaultData[5] as BigInt).toInt(),
+                  'duration': (vaultData[6] as BigInt).toInt(),
+                });
+              }
+            } catch (e) {
+              // 🚀 THE FIX: Isolate the error. If Vault 45 fails, it skips it but keeps fetching Vault 46.
+              debugPrint('🔥 TRACE: Failed to fetch vault #$j: $e');
+            }
+          }());
         }
+        
+        // Wait for the current chunk to finish
+        await Future.wait(futures);
+        
+        // Add a 300ms breather between chunks so Alchemy doesn't ban your IP
+        await Future.delayed(const Duration(milliseconds: 300)); 
       }
       
       activeVaults = fetchedVaults;
       notifyListeners();
+      debugPrint('🔥 TRACE: Successfully loaded ${activeVaults.length} vaults for user.');
+      
     } catch (e) {
-      debugPrint('🔥 TRACE: Failed to fetch vaults: $e');
+      debugPrint('🔥 TRACE: Failed global vault fetch: $e');
     }
   }
 
@@ -411,7 +465,7 @@ class CeloWalletProvider extends ChangeNotifier {
     String? heirEmail, String? pin, String? directWalletAddress,
   }) async {
     try {
-      if (AppConstants.lifeLineContract.contains("CHANGE_THIS")) throw Exception("Add Contract Address to AppConstants!");
+      if (AppConstants.lifeLineContract.contains("CHANGE_THIS")) throw Exception("Add Mainnet Contract Address to AppConstants!");
 
       isLoading = true;
       errorMessage = null;
@@ -635,6 +689,7 @@ class CeloWalletProvider extends ChangeNotifier {
 // 4. ENTRY POINT & THEME
 // ==============================================================
 void main() {
+  debugPrint('🔥 TRACE: Initializing LifeLine Protocol on Celo Mainnet...');
   runApp(MultiProvider(providers: [ChangeNotifierProvider(create: (_) => CeloWalletProvider())], child: const LifeLineApp()));
 }
 
@@ -746,7 +801,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
         child: Column(
           children: [
             const SizedBox(height: 60),
-            Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: AppTheme.gold.withOpacity(0.08), border: Border.all(color: AppTheme.gold.withOpacity(0.2)), borderRadius: BorderRadius.circular(20)), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 6, height: 6, decoration: const BoxDecoration(color: AppTheme.gold, shape: BoxShape.circle)), const SizedBox(width: 8), const Text("Celo Sepolia", style: TextStyle(color: AppTheme.gold, fontSize: 12, fontWeight: FontWeight.w500))])),
+            Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: AppTheme.gold.withOpacity(0.08), border: Border.all(color: AppTheme.gold.withOpacity(0.2)), borderRadius: BorderRadius.circular(20)), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 6, height: 6, decoration: const BoxDecoration(color: AppTheme.gold, shape: BoxShape.circle)), const SizedBox(width: 8), const Text("Celo Mainnet", style: TextStyle(color: AppTheme.gold, fontSize: 12, fontWeight: FontWeight.w500))])),
             const SizedBox(height: 24),
             Container(width: 80, height: 80, decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF0D3322), Color(0xFF1A5C3A)]), borderRadius: BorderRadius.circular(24), border: Border.all(color: AppTheme.green.withOpacity(0.3))), child: const Icon(LucideIcons.shieldCheck, color: AppTheme.green, size: 40)),
             const SizedBox(height: 24),
@@ -1255,12 +1310,10 @@ class _ClaimScreenState extends State<ClaimScreen> {
   Future<void> _verifyAndPromptWallet() async {
     setState(() { isProcessing = true; statusMsg = "Verifying Link..."; });
     try {
-      // ✅ FIX: Use properties initialized on App Boot before Flutter cleared the URL bar
       String? vaultIdStr = widget.vaultId; 
       String? payload = widget.payload;
       String? tokenAddr = widget.tokenAddr ?? AppConstants.tokens['USDC']!['address'];
 
-      // 🔥 DEV FALLBACK: If navigating manually, read latest from local storage
       if (payload == null) {
         final storedUrl = web.window.localStorage.getItem('ll_claim_${vaultIdStr ?? "1"}');
         if (storedUrl != null) {
@@ -1275,7 +1328,6 @@ class _ClaimScreenState extends State<ClaimScreen> {
 
       setState(() => statusMsg = "Decrypting Ephemeral Key...");
       
-      // ✅ SAFELY REVERT "+" TO SPACES IF URL DECODING MISSED IT
       final privateKeyHex = EvmEncryptionService.decryptWithPin(payload.replaceAll(" ", "+"), pinBuffer);
       _showWalletModal(privateKeyHex, vaultIdStr ?? "1", tokenAddr!);
     } catch (e) {
@@ -1364,6 +1416,3 @@ class _ClaimScreenState extends State<ClaimScreen> {
     );
   }
 }
-
-
-// Code style alignment
