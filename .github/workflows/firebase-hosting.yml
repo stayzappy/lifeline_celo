@@ -7,13 +7,19 @@ on:
 
 jobs:
   build_and_deploy:
+
     runs-on: ubuntu-latest
+
+    environment:
+      name: production
+      url: https://uselifelineprotocol.web.app
 
     permissions:
       contents: read
       deployments: write
 
     steps:
+
       - name: Checkout Repo
         uses: actions/checkout@v4
 
@@ -25,16 +31,16 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Analyze
+      - name: Flutter Analyze
         run: flutter analyze
 
-      - name: Run Tests
+      - name: Flutter Test
         run: flutter test
 
-      - name: Build Web
+      - name: Build Flutter Web
         run: flutter build web
 
-      - name: Deploy to Firebase
+      - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
