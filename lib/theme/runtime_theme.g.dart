@@ -1,7 +1,7 @@
 // GENERATED FILE
-// Generated at: 2026-05-23 13:34:07
+// Generated at: 2026-05-23 14:11:36
 
 class RuntimeTheme {
-  static const String accentColor = '#FF9500';
-  static const String generatedAt = '2026-05-23 13:34:07';
+  static const String accentColor = '#C8FF00';
+  static const String generatedAt = '2026-05-23 14:11:36';
 }
