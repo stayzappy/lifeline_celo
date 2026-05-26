@@ -6,12 +6,10 @@ LifeLine Protocol is a decentralized, time-locked vault system built for the Cel
 
 ## 📸 Interface
 
-*(Drag and drop your screenshots below)*
-
-![Dashboard Screenshot]<img width="1731" height="864" alt="image" src="https://github.com/user-attachments/assets/61c2c447-b10e-4fdf-85e2-76f56c49d81a" />
+<img width="1731" height="864" alt="image" src="https://github.com/user-attachments/assets/61c2c447-b10e-4fdf-85e2-76f56c49d81a" />
 
 
-![Claim Flow Screenshot]<img width="1731" height="864" alt="image" src="https://github.com/user-attachments/assets/b6426fe0-14b5-426b-964e-97720aaecc28" />
+<img width="1731" height="864" alt="image" src="https://github.com/user-attachments/assets/b6426fe0-14b5-426b-964e-97720aaecc28" />
 
 
 ## ⚡ Core Features
