@@ -19,14 +19,46 @@ import 'dart:js_interop';
 import 'dart:js_util' as js_util;
 
 // ==============================================================
-// 1. JS INTEROP (MiniPay & EVM Bridge)
+// 1. STRICT JS INTEROP (Multi-Wallet & EVM Bridge)
 // ==============================================================
 @JS('window.ethereum')
-external JSObject? get ethereum;
+external Ethereum? get ethereum;
+
+@JS('window.coinbaseWalletExtension')
+external Ethereum? get coinbaseWalletExtension;
+
+@JS('window.trustwallet')
+external Ethereum? get trustWallet;
+
+@JS('window.phantom.ethereum')
+external Ethereum? get phantomWallet;
+
+@JS()
+extension type Ethereum._(JSObject _) implements JSObject {
+  external JSPromise request(RequestArguments args);
+  external bool? get isMetaMask;
+  external bool? get isRabby;
+  external bool? get isCoinbaseWallet;
+  external bool? get isTrust;
+  external bool? get isPhantom;
+  external bool? get isMiniPay;
+}
+
+@JS()
+@anonymous
+extension type RequestArguments._(JSObject _) implements JSObject {
+  external factory RequestArguments({
+    required JSString method,
+    JSAny? params,
+  });
+}
 
 bool isMiniPay() {
-  if (ethereum == null) return false;
-  return js_util.getProperty(ethereum!, 'isMiniPay') == true;
+  try {
+    return ethereum?.isMiniPay == true;
+  } catch (e) {
+    return false;
+  }
 }
 
 Map<String, String> parseWebUrlParams() {
@@ -238,6 +270,8 @@ class EvmEncryptionService {
 // ==============================================================
 class CeloWalletProvider extends ChangeNotifier {
   String? userAddress;
+  Ethereum? activeProvider; // Track active wallet provider securely
+  
   Map<String, double> tokenBalances = {'CELO': 0.0, 'USDC': 0.0};
   List<Map<String, dynamic>> activeVaults = [];
   
@@ -266,42 +300,40 @@ class CeloWalletProvider extends ChangeNotifier {
     return BigInt.parse(whole + fraction);
   }
 
-  Future<void> connectWallet() async {
+  // Unified Multi-Wallet connection
+  Future<void> connectProvider(Ethereum? provider, BuildContext context) async {
     try {
       isLoading = true;
       errorMessage = null;
       loadingStatus = "Connecting Web3...";
       notifyListeners();
 
-      debugPrint('🔥 TRACE: Beginning Wallet Connection...');
-      if (ethereum == null) throw Exception("No Web3 provider found.");
+      debugPrint('🔥 TRACE: Beginning Wallet Connection Sequence...');
+      if (provider == null) throw Exception("Wallet not detected. Please install the required extension or app.");
 
-      debugPrint('🔥 TRACE: Requesting Accounts via JS Interop...');
-      final JSObject args = js_util.jsify({'method': 'eth_requestAccounts'});
-      final JSPromise promise = js_util.callMethod(ethereum!, 'request', [args]);
+      debugPrint('🔥 TRACE: Requesting Accounts via strict JS Interop...');
+      final args = RequestArguments(method: 'eth_requestAccounts'.toJS);
       
-      // FIX: Added timeout to prevent hanging if the wallet ignores the request
-      final result = await js_util.promiseToFuture(promise).timeout(const Duration(seconds: 15), onTimeout: () {
+      final result = await js_util.promiseToFuture(provider.request(args)).timeout(const Duration(seconds: 15), onTimeout: () {
         throw Exception("Wallet connection timed out. Please check your extension/app.");
       });
       
       final List<dynamic> accounts = result as List<dynamic>;
-      if (accounts.isEmpty) throw Exception("Connection rejected.");
+      if (accounts.isEmpty) throw Exception("Connection rejected by user.");
       
       userAddress = accounts.first.toString().toLowerCase();
+      activeProvider = provider;
       isConnected = true;
       debugPrint('🔥 TRACE: Connected successfully as $userAddress');
 
       if (!isMiniPay()) {
         debugPrint('🔥 TRACE: Validating Celo Mainnet connection (ChainID: ${AppConstants.chainId})...');
         try {
-          final switchArgs = js_util.jsify({
-            'method': 'wallet_switchEthereumChain',
-            'params': [{'chainId': '0x${AppConstants.chainId.toRadixString(16)}'}]
-          });
-          // FIX: Timeout aggressively to prevent wallet silence from locking the UI
-          await js_util.promiseToFuture(js_util.callMethod(ethereum!, 'request', [switchArgs]))
-            .timeout(const Duration(seconds: 3));
+          final switchArgs = RequestArguments(
+            method: 'wallet_switchEthereumChain'.toJS,
+            params: [{'chainId': '0x${AppConstants.chainId.toRadixString(16)}'}].jsify()
+          );
+          await js_util.promiseToFuture(provider.request(switchArgs)).timeout(const Duration(seconds: 3));
           debugPrint('🔥 TRACE: Network Switch Request Completed.');
         } catch (e) {
           debugPrint('🔥 TRACE: Network Switch Bypassed/Failed: $e. Proceeding anyway.');
@@ -310,12 +342,16 @@ class CeloWalletProvider extends ChangeNotifier {
          debugPrint('🔥 TRACE: MiniPay detected, bypassing network switch.');
       }
 
-      debugPrint('🔥 TRACE: Calling refreshBalances()...');
-      await refreshBalances();
+      debugPrint('🔥 TRACE: Kicking off refreshBalances() asynchronously...');
+      
+      // 🚀 THE FIX: We remove 'await' here. 
+      // The data will fetch in the background while the UI instantly navigates to the dashboard!
+      refreshBalances(); 
+      
       debugPrint('🔥 TRACE: Connection sequence entirely complete.');
 
     } catch (e) {
-      debugPrint('🔥 TRACE: connectWallet Error Captured: $e');
+      debugPrint('🔥 TRACE: connectProvider Error Captured: $e');
       errorMessage = e.toString().replaceAll('Exception:', '').trim();
     } finally {
       debugPrint('🔥 TRACE: Releasing UI Loader Lock...');
@@ -324,13 +360,23 @@ class CeloWalletProvider extends ChangeNotifier {
     }
   }
 
+  void disconnectWallet() {
+    debugPrint('🔥 TRACE: Disconnecting wallet and clearing local state...');
+    userAddress = null;
+    activeProvider = null;
+    isConnected = false;
+    tokenBalances = {'CELO': 0.0, 'USDC': 0.0};
+    activeVaults = [];
+    errorMessage = null;
+    notifyListeners();
+  }
+
   Future<void> refreshBalances() async {
     if (userAddress == null) return;
     try {
       debugPrint('🔥 TRACE: Fetching CELO balance...');
       final address = EthereumAddress.fromHex(userAddress!, enforceEip55: false);
       
-      // FIX: Alchemy RPC streams can hang on Web. Enforced hard timeout.
       final celoBal = await _web3client.getBalance(address).timeout(const Duration(seconds: 10));
       tokenBalances['CELO'] = celoBal.getValueInUnit(EtherUnit.ether);
       debugPrint('🔥 TRACE: CELO balance retrieved: ${tokenBalances['CELO']}');
@@ -374,7 +420,6 @@ class CeloWalletProvider extends ChangeNotifier {
 
       List<Map<String, dynamic>> fetchedVaults = [];
       
-      // 🚀 THE FIX: Batch processing 20 vaults at a time to prevent rate limits
       const int chunkSize = 20; 
       for (int i = 1; i <= totalVaults; i += chunkSize) {
         final end = (i + chunkSize - 1 > totalVaults) ? totalVaults : i + chunkSize - 1;
@@ -384,7 +429,6 @@ class CeloWalletProvider extends ChangeNotifier {
         for (int j = i; j <= end; j++) {
           futures.add(() async {
             try {
-              // Increased timeout slightly for mainnet latency
               final vaultRes = await _web3client.call(contract: llContract, function: getVaultFunc, params: [BigInt.from(j)]).timeout(const Duration(seconds: 8));
               final vaultData = vaultRes.first as List<dynamic>; 
               
@@ -412,16 +456,12 @@ class CeloWalletProvider extends ChangeNotifier {
                 });
               }
             } catch (e) {
-              // 🚀 THE FIX: Isolate the error. If Vault 45 fails, it skips it but keeps fetching Vault 46.
               debugPrint('🔥 TRACE: Failed to fetch vault #$j: $e');
             }
           }());
         }
         
-        // Wait for the current chunk to finish
         await Future.wait(futures);
-        
-        // Add a 300ms breather between chunks so Alchemy doesn't ban your IP
         await Future.delayed(const Duration(milliseconds: 300)); 
       }
       
@@ -435,11 +475,15 @@ class CeloWalletProvider extends ChangeNotifier {
   }
 
   Future<String> sendAndWait({required String to, required String data, String value = "0x0", required String actionName}) async {
+    if (activeProvider == null) throw Exception("Wallet disconnected!");
+
     final txParams = {'to': to, 'from': userAddress, 'data': data, 'value': value};
-    final JSObject args = js_util.jsify({'method': 'eth_sendTransaction', 'params': [txParams]});
+    final args = RequestArguments(
+      method: 'eth_sendTransaction'.toJS,
+      params: [txParams].jsify()
+    );
     
-    final JSPromise promise = js_util.callMethod(ethereum!, 'request', [args]);
-    final txHash = (await js_util.promiseToFuture(promise)).toString();
+    final txHash = (await js_util.promiseToFuture(activeProvider!.request(args))).toString();
     debugPrint('🔥 TRACE: [$actionName] Mined to Mempool: $txHash');
 
     int attempts = 0;
@@ -728,7 +772,6 @@ class _MobileAppShellState extends State<MobileAppShell> {
   int _currentScreen = 0;
   int? _selectedVaultId;
 
-  // ✅ CAPTURE URL PARAMS ON BOOT BEFORE ROUTER CLEANS THEM
   String? _claimVaultId;
   String? _claimPayload;
   String? _claimToken;
@@ -765,7 +808,12 @@ class _MobileAppShellState extends State<MobileAppShell> {
   Widget _getScreenWidget() {
     switch (_currentScreen) {
       case 0: return WelcomeScreen(key: const ValueKey(0), onNext: () => _navigate(1));
-      case 1: return DashboardScreen(key: const ValueKey(1), onVaultClick: (id) => _navigate(3, vaultId: id), onCreateClick: () => _navigate(2));
+      case 1: return DashboardScreen(
+        key: const ValueKey(1), 
+        onVaultClick: (id) => _navigate(3, vaultId: id), 
+        onCreateClick: () => _navigate(2),
+        onDisconnectClick: () => _navigate(0)
+      );
       case 2: return CreateVaultScreen(key: const ValueKey(2), onBack: () => _navigate(1), onSubmit: () => _navigate(1));
       case 3: return VaultDetailScreen(key: const ValueKey(3), vaultId: _selectedVaultId!, onBack: () => _navigate(1), onForceClaim: () => _navigate(4));
       case 4: return ClaimScreen(
@@ -791,6 +839,74 @@ class WelcomeScreen extends StatefulWidget {
 
 class _WelcomeScreenState extends State<WelcomeScreen> {
   final ScrollController _scrollController = ScrollController();
+
+  void _showWalletSelector(BuildContext context, CeloWalletProvider wallet) {
+    if (isMiniPay()) {
+      debugPrint('[Wallet UI] MiniPay environment detected. Routing natively...');
+      wallet.connectProvider(ethereum, context).then((_) {
+        if (wallet.isConnected) widget.onNext();
+      });
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+         return Center(
+           child: Material(
+             color: Colors.transparent,
+             child: Container(
+               width: 360,
+               padding: const EdgeInsets.all(24),
+               decoration: BoxDecoration(color: AppTheme.card, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(20)),
+               child: Column(
+                 mainAxisSize: MainAxisSize.min,
+                 children: [
+                   Row(
+                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                     children: [
+                        const Text("Connect Wallet", style: TextStyle(color: AppTheme.cream, fontSize: 18, fontWeight: FontWeight.bold)),
+                        IconButton(icon: const Icon(Icons.close, color: AppTheme.muted), onPressed: () => Navigator.pop(ctx))
+                     ]
+                   ),
+                   const SizedBox(height: 16),
+                   _buildWalletOpt("MetaMask", "Injected", Icons.pets, Colors.orange, () { Navigator.pop(ctx); wallet.connectProvider(ethereum, context).then((_) { if(wallet.isConnected) widget.onNext(); }); }),
+                   _buildWalletOpt("Coinbase Wallet", "Extension", Icons.account_balance_wallet, Colors.blue, () { Navigator.pop(ctx); final p = coinbaseWalletExtension ?? ((ethereum?.isCoinbaseWallet == true) ? ethereum : null); wallet.connectProvider(p, context).then((_) { if(wallet.isConnected) widget.onNext(); }); }),
+                   _buildWalletOpt("Trust Wallet", "Injected", Icons.shield, Colors.lightBlue, () { Navigator.pop(ctx); final p = trustWallet ?? ((ethereum?.isTrust == true) ? ethereum : null); wallet.connectProvider(p, context).then((_) { if(wallet.isConnected) widget.onNext(); }); }),
+                   _buildWalletOpt("Phantom", "EVM Ready", Icons.visibility, Colors.deepPurple, () { Navigator.pop(ctx); final p = phantomWallet ?? ((ethereum?.isPhantom == true) ? ethereum : null); wallet.connectProvider(p, context).then((_) { if(wallet.isConnected) widget.onNext(); }); }),
+                   _buildWalletOpt("Rabby Wallet", "Extension", Icons.security, Colors.indigoAccent, () { Navigator.pop(ctx); final p = (ethereum != null && ethereum!.isRabby == true) ? ethereum : null; wallet.connectProvider(p, context).then((_) { if(wallet.isConnected) widget.onNext(); }); }),
+                 ]
+               )
+             )
+           )
+         );
+      }
+    );
+  }
+
+  Widget _buildWalletOpt(String name, String sub, IconData icon, Color color, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12.0),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(14)),
+          child: Row(
+            children: [
+              Icon(icon, color: color, size: 24),
+              const SizedBox(width: 16),
+              Text(name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppTheme.cream)),
+              const Spacer(),
+              Text(sub, style: const TextStyle(fontSize: 12, color: AppTheme.muted))
+            ]
+          )
+        )
+      )
+    );
+  }
+
   @override Widget build(BuildContext context) {
     final wallet = context.watch<CeloWalletProvider>();
     return KeyboardScrollWrapper(
@@ -805,21 +921,33 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
             const SizedBox(height: 24),
             Container(width: 80, height: 80, decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF0D3322), Color(0xFF1A5C3A)]), borderRadius: BorderRadius.circular(24), border: Border.all(color: AppTheme.green.withOpacity(0.3))), child: const Icon(LucideIcons.shieldCheck, color: AppTheme.green, size: 40)),
             const SizedBox(height: 24),
-            Text("Your Digital\nLegacy, Secured", textAlign: TextAlign.center, style: GoogleFonts.cormorantGaramond(fontSize: 32, fontWeight: FontWeight.w600, height: 1.1)),
+            
+            // EXPLANATORY UX UPDATES
+            const Text("LifeLine Protocol", style: TextStyle(color: AppTheme.green, fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: 2)),
+            const SizedBox(height: 8),
+            Text("Your Digital Legacy,\nSecured On-Chain", textAlign: TextAlign.center, style: GoogleFonts.cormorantGaramond(fontSize: 32, fontWeight: FontWeight.w600, height: 1.1)),
             const SizedBox(height: 16),
-            const Text("Proof-of-life inheritance protocol.\nZero counterparty risk.", textAlign: TextAlign.center, style: TextStyle(color: AppTheme.muted, fontSize: 14, height: 1.5)),
-            const SizedBox(height: 60),
+            const Text(
+              "LifeLine ensures your crypto assets are safely passed on to your loved ones if you become inactive.\n\n"
+              "1. Lock assets in a secure smart contract vault.\n"
+              "2. Set an inactivity timer (e.g., 6 months).\n"
+              "3. Ping occasionally to prove you're active.\n"
+              "4. If the timer expires, an automated email sends the claim link to your heir.",
+              style: TextStyle(color: AppTheme.muted, fontSize: 14, height: 1.6),
+            ),
+            const SizedBox(height: 40),
+            
             if (wallet.errorMessage != null) Padding(padding: const EdgeInsets.only(bottom: 16.0), child: Text(wallet.errorMessage!, textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.red, fontSize: 13, fontWeight: FontWeight.w500))),
             if (wallet.isLoading) Padding(padding: const EdgeInsets.symmetric(vertical: 24.0), child: Column(children: [const CircularProgressIndicator(color: AppTheme.green), const SizedBox(height: 12), Text(wallet.loadingStatus, style: const TextStyle(color: AppTheme.muted, fontSize: 12))]))
             else ...[
               InkWell(
-                onTap: () async { await wallet.connectWallet(); if (wallet.isConnected) widget.onNext(); },
+                onTap: () => _showWalletSelector(context, wallet),
                 borderRadius: BorderRadius.circular(16),
                 child: Container(width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 18), decoration: BoxDecoration(color: AppTheme.gold.withOpacity(0.12), border: Border.all(color: AppTheme.gold.withOpacity(0.25)), borderRadius: BorderRadius.circular(16)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(LucideIcons.wallet, color: AppTheme.gold, size: 18), const SizedBox(width: 8), Text(isMiniPay() ? "Open in MiniPay" : "Connect Web3 Wallet", style: const TextStyle(color: AppTheme.gold, fontSize: 15, fontWeight: FontWeight.w600))])),
               ),
             ],
             const SizedBox(height: 20),
-            const Text("Verify via Self · Worldcoin · Coinbase", style: TextStyle(color: AppTheme.muted, fontSize: 11)),
+            const Text("Multi-Wallet support natively enabled.", style: TextStyle(color: AppTheme.muted, fontSize: 11)),
           ],
         ),
       ),
@@ -830,7 +958,9 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 class DashboardScreen extends StatefulWidget {
   final Function(int) onVaultClick;
   final VoidCallback onCreateClick;
-  const DashboardScreen({super.key, required this.onVaultClick, required this.onCreateClick});
+  final VoidCallback onDisconnectClick;
+  
+  const DashboardScreen({super.key, required this.onVaultClick, required this.onCreateClick, required this.onDisconnectClick});
   @override State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
@@ -862,7 +992,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         Container(margin: const EdgeInsets.only(top: 6), padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(8)), child: Row(children: [Container(width: 6, height: 6, decoration: const BoxDecoration(color: Color(0xFF4CD9A0), shape: BoxShape.circle)), const SizedBox(width: 6), Text(shortAddress, style: GoogleFonts.spaceMono(fontSize: 11, color: AppTheme.muted, fontWeight: FontWeight.w600))]))
                       ],
                     ),
-                    Container(width: 44, height: 44, decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(12)), child: const Icon(LucideIcons.scanLine, color: AppTheme.muted, size: 20)),
+                    // DISCONNECT WALLET BUTTON LOGIC ADDED HERE
+                    InkWell(
+                      onTap: () {
+                         wallet.disconnectWallet();
+                         widget.onDisconnectClick();
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(width: 44, height: 44, decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.red.withOpacity(0.3)), borderRadius: BorderRadius.circular(12)), child: const Icon(LucideIcons.logOut, color: AppTheme.red, size: 20)),
+                    )
                   ],
                 ),
                 const SizedBox(height: 24),
@@ -1339,7 +1477,12 @@ class _ClaimScreenState extends State<ClaimScreen> {
     setState(() { isProcessing = true; statusMsg = "Connecting to your wallet..."; });
     try {
       final wallet = context.read<CeloWalletProvider>();
-      await wallet.connectWallet();
+      
+      // Auto reconnect via current provider if missing (Assuming wallet injected via ClaimScreen execution context)
+      if (!wallet.isConnected) {
+        await wallet.connectProvider(ethereum, context);
+      }
+      
       if (!wallet.isConnected) throw Exception("Wallet connection required to receive funds.");
 
       final ephemeralCredentials = EthPrivateKey.fromHex(privateKeyHex);
