@@ -76,7 +76,7 @@ Map<String, String> parseWebUrlParams() {
 }
 
 // ==============================================================
-// KEYBOARD SCROLL WRAPPER
+// KEYBOARD SCROLL WRAPPER (FIXED FOR TEXT INPUTS)
 // ==============================================================
 class KeyboardScrollWrapper extends StatefulWidget {
   final Widget child;
@@ -93,21 +93,35 @@ class _KeyboardScrollWrapperState extends State<KeyboardScrollWrapper> {
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      onEnter: (_) { if (FocusManager.instance.primaryFocus?.context?.widget is! EditableText) _focusNode.requestFocus(); },
+      onEnter: (_) {
+        if (FocusManager.instance.primaryFocus == null || FocusManager.instance.primaryFocus == FocusManager.instance.rootScope) {
+          _focusNode.requestFocus();
+        }
+      },
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onTap: () { if (FocusManager.instance.primaryFocus?.context?.widget is! EditableText) _focusNode.requestFocus(); },
+        onTap: () {
+          FocusManager.instance.primaryFocus?.unfocus();
+          _focusNode.requestFocus();
+        },
         child: Focus(
-          focusNode: _focusNode, autofocus: true, canRequestFocus: true,
+          focusNode: _focusNode, 
+          autofocus: true, 
+          canRequestFocus: true,
           onKeyEvent: (node, event) {
+            if (FocusManager.instance.primaryFocus != _focusNode) return KeyEventResult.ignored;
+
             if (event is KeyDownEvent || event is KeyRepeatEvent) {
-              if (FocusManager.instance.primaryFocus?.context?.widget is EditableText) return KeyEventResult.ignored;
-              const double scrollAmount = 150.0; const double pageScrollAmount = 400.0;
+              const double scrollAmount = 150.0; 
+              const double pageScrollAmount = 400.0;
               double target = widget.controller.offset;
+              
               if (event.logicalKey == LogicalKeyboardKey.arrowDown) target += scrollAmount;
               else if (event.logicalKey == LogicalKeyboardKey.arrowUp) target -= scrollAmount;
               else if (event.logicalKey == LogicalKeyboardKey.pageDown || event.logicalKey == LogicalKeyboardKey.space) target += pageScrollAmount;
               else if (event.logicalKey == LogicalKeyboardKey.pageUp) target -= pageScrollAmount;
+              else return KeyEventResult.ignored;
+
               if (target != widget.controller.offset) {
                 target = target.clamp(0.0, widget.controller.position.maxScrollExtent);
                 widget.controller.animateTo(target, duration: const Duration(milliseconds: 100), curve: Curves.easeOut);
@@ -195,7 +209,7 @@ class AppConstants {
   };
 
   static const String emailServiceId = "service_vn7cori";
-  static const String emailTemplateId = "template_kvr23rf";
+  static const String emailTemplateId = "template_rq9b5e6";
   static const String emailPublicKey = "Lq6_Q8yKgmRsCIL-m";
 }
 
@@ -266,23 +280,27 @@ class EvmEncryptionService {
 }
 
 // ==============================================================
-// 3. STATE & TRANSACTION MANAGER
+// 3. STATE & TRANSACTION MANAGER 
 // ==============================================================
 class CeloWalletProvider extends ChangeNotifier {
   String? userAddress;
-  Ethereum? activeProvider; // Track active wallet provider securely
+  Ethereum? activeProvider; 
   
   Map<String, double> tokenBalances = {'CELO': 0.0, 'USDC': 0.0};
   List<Map<String, dynamic>> activeVaults = [];
   
   bool isConnected = false;
   bool isLoading = false;
+  
+  bool isSyncingBalances = false; 
+  bool isSyncingVaults = false; 
+  
   String? errorMessage;
   String loadingStatus = "";
 
   final Web3Client _web3client = Web3Client(AppConstants.rpcUrl, http.Client());
 
-  final String _erc20Abi = '[{"constant":true,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"}, {"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"type":"function"}]';
+  final String _erc20Abi = '[{"constant":true,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"}, {"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"type":"function"}, {"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"type":"function"}]';
   final String _lifeLineAbi = '[{"inputs":[{"internalType":"address","name":"tokenAddress","type":"address"},{"internalType":"address","name":"heirAddress","type":"address"},{"internalType":"bytes32","name":"heirPubkey","type":"bytes32"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"uint64","name":"inactivityDuration","type":"uint64"}],"name":"createVault","outputs":[{"internalType":"uint64","name":"","type":"uint64"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"vaultCounter","outputs":[{"internalType":"uint64","name":"","type":"uint64"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint64","name":"vaultId","type":"uint64"}],"name":"pingVault","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint64","name":"vaultId","type":"uint64"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"addFunds","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint64","name":"vaultId","type":"uint64"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"withdrawFunds","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint64","name":"vaultId","type":"uint64"}],"name":"cancelVault","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint64","name":"vaultId","type":"uint64"}],"name":"getVault","outputs":[{"components":[{"internalType":"address","name":"owner","type":"address"},{"internalType":"address","name":"heirAddress","type":"address"},{"internalType":"bytes32","name":"heirPubkey","type":"bytes32"},{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"balance","type":"uint256"},{"internalType":"uint64","name":"unlockTime","type":"uint64"},{"internalType":"uint64","name":"inactivityDuration","type":"uint64"},{"internalType":"bool","name":"isActive","type":"bool"}],"internalType":"struct LifeLine.Vault","name":"","type":"tuple"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint64","name":"vaultId","type":"uint64"},{"internalType":"bytes32","name":"sigR","type":"bytes32"},{"internalType":"bytes32","name":"sigS","type":"bytes32"},{"internalType":"uint8","name":"sigV","type":"uint8"}],"name":"claimInheritance","outputs":[],"stateMutability":"nonpayable","type":"function"}]';
 
   bool hasSufficientBalance(String symbol, double requiredAmount) {
@@ -300,7 +318,6 @@ class CeloWalletProvider extends ChangeNotifier {
     return BigInt.parse(whole + fraction);
   }
 
-  // Unified Multi-Wallet connection
   Future<void> connectProvider(Ethereum? provider, BuildContext context) async {
     try {
       isLoading = true;
@@ -308,10 +325,8 @@ class CeloWalletProvider extends ChangeNotifier {
       loadingStatus = "Connecting Web3...";
       notifyListeners();
 
-      debugPrint('🔥 TRACE: Beginning Wallet Connection Sequence...');
       if (provider == null) throw Exception("Wallet not detected. Please install the required extension or app.");
 
-      debugPrint('🔥 TRACE: Requesting Accounts via strict JS Interop...');
       final args = RequestArguments(method: 'eth_requestAccounts'.toJS);
       
       final result = await js_util.promiseToFuture(provider.request(args)).timeout(const Duration(seconds: 15), onTimeout: () {
@@ -324,44 +339,30 @@ class CeloWalletProvider extends ChangeNotifier {
       userAddress = accounts.first.toString().toLowerCase();
       activeProvider = provider;
       isConnected = true;
-      debugPrint('🔥 TRACE: Connected successfully as $userAddress');
 
       if (!isMiniPay()) {
-        debugPrint('🔥 TRACE: Validating Celo Mainnet connection (ChainID: ${AppConstants.chainId})...');
         try {
           final switchArgs = RequestArguments(
             method: 'wallet_switchEthereumChain'.toJS,
             params: [{'chainId': '0x${AppConstants.chainId.toRadixString(16)}'}].jsify()
           );
           await js_util.promiseToFuture(provider.request(switchArgs)).timeout(const Duration(seconds: 3));
-          debugPrint('🔥 TRACE: Network Switch Request Completed.');
         } catch (e) {
           debugPrint('🔥 TRACE: Network Switch Bypassed/Failed: $e. Proceeding anyway.');
         } 
-      } else {
-         debugPrint('🔥 TRACE: MiniPay detected, bypassing network switch.');
       }
 
-      debugPrint('🔥 TRACE: Kicking off refreshBalances() asynchronously...');
-      
-      // 🚀 THE FIX: We remove 'await' here. 
-      // The data will fetch in the background while the UI instantly navigates to the dashboard!
       refreshBalances(); 
       
-      debugPrint('🔥 TRACE: Connection sequence entirely complete.');
-
     } catch (e) {
-      debugPrint('🔥 TRACE: connectProvider Error Captured: $e');
       errorMessage = e.toString().replaceAll('Exception:', '').trim();
     } finally {
-      debugPrint('🔥 TRACE: Releasing UI Loader Lock...');
       isLoading = false;
       notifyListeners();
     }
   }
 
   void disconnectWallet() {
-    debugPrint('🔥 TRACE: Disconnecting wallet and clearing local state...');
     userAddress = null;
     activeProvider = null;
     isConnected = false;
@@ -371,17 +372,24 @@ class CeloWalletProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void dismissVault(int vaultId) {
+    if (userAddress == null) return;
+    web.window.localStorage.setItem('ll_dismissed_${userAddress}_$vaultId', 'true');
+    activeVaults.removeWhere((v) => v['id'] == vaultId);
+    notifyListeners();
+  }
+
   Future<void> refreshBalances() async {
     if (userAddress == null) return;
     try {
-      debugPrint('🔥 TRACE: Fetching CELO balance...');
+      isSyncingBalances = true; 
+      notifyListeners();
+
       final address = EthereumAddress.fromHex(userAddress!, enforceEip55: false);
       
       final celoBal = await _web3client.getBalance(address).timeout(const Duration(seconds: 10));
       tokenBalances['CELO'] = celoBal.getValueInUnit(EtherUnit.ether);
-      debugPrint('🔥 TRACE: CELO balance retrieved: ${tokenBalances['CELO']}');
 
-      debugPrint('🔥 TRACE: Fetching USDC balance...');
       final usdcAddr = EthereumAddress.fromHex(AppConstants.tokens['USDC']!['address'], enforceEip55: false);
       final contract = DeployedContract(ContractAbi.fromJson(_erc20Abi, 'ERC20'), usdcAddr);
       final balanceOfFunc = contract.function('balanceOf');
@@ -393,37 +401,38 @@ class CeloWalletProvider extends ChangeNotifier {
         final rawUsdc = usdcResponse.first as BigInt;
         final decimals = AppConstants.tokens['USDC']!['decimals'] as int;
         tokenBalances['USDC'] = rawUsdc / BigInt.from(pow(10, decimals));
-        debugPrint('🔥 TRACE: USDC balance retrieved: ${tokenBalances['USDC']}');
       }
 
       if (!AppConstants.lifeLineContract.contains("CHANGE_THIS")) {
-        debugPrint('🔥 TRACE: Fetching User Vaults...');
-        await fetchUserVaults();
-      } else {
-        debugPrint('🔥 TRACE: Vault fetch skipped. Contract address is still a placeholder.');
+        fetchUserVaults(); 
       }
+      
     } catch (e) {
       debugPrint('🔥 TRACE: refreshBalances() Sync failed or timed out: $e');
+    } finally {
+      isSyncingBalances = false; 
+      notifyListeners();
     }
   }
 
   Future<void> fetchUserVaults() async {
     if (userAddress == null) return;
     try {
+      isSyncingVaults = true;
+      notifyListeners();
+
       final llContract = DeployedContract(ContractAbi.fromJson(_lifeLineAbi, 'LifeLine'), EthereumAddress.fromHex(AppConstants.lifeLineContract, enforceEip55: false));
       final counterFunc = llContract.function('vaultCounter');
       final getVaultFunc = llContract.function('getVault');
       
       final counterRes = await _web3client.call(contract: llContract, function: counterFunc, params: []).timeout(const Duration(seconds: 10));
       final totalVaults = (counterRes.first as BigInt).toInt();
-      debugPrint('🔥 TRACE: Global Vault Counter: $totalVaults');
 
       List<Map<String, dynamic>> fetchedVaults = [];
       
       const int chunkSize = 20; 
       for (int i = 1; i <= totalVaults; i += chunkSize) {
         final end = (i + chunkSize - 1 > totalVaults) ? totalVaults : i + chunkSize - 1;
-        debugPrint('🔥 TRACE: Fetching vaults $i to $end...');
         
         List<Future<void>> futures = [];
         for (int j = i; j <= end; j++) {
@@ -435,7 +444,9 @@ class CeloWalletProvider extends ChangeNotifier {
               final owner = vaultData[0].toString().toLowerCase();
               final isActive = vaultData[7] as bool;
 
-              if (owner == userAddress && isActive) {
+              final isDismissed = web.window.localStorage.getItem('ll_dismissed_${userAddress}_$j') == 'true';
+
+              if (owner == userAddress && !isDismissed) {
                 final tokenHex = vaultData[3].toString().toLowerCase();
                 String symbol = "Unknown";
                 int decimals = 18;
@@ -453,6 +464,7 @@ class CeloWalletProvider extends ChangeNotifier {
                   'balance': formattedBalance,
                   'unlockTime': (vaultData[5] as BigInt).toInt(),
                   'duration': (vaultData[6] as BigInt).toInt(),
+                  'isActive': isActive 
                 });
               }
             } catch (e) {
@@ -466,11 +478,12 @@ class CeloWalletProvider extends ChangeNotifier {
       }
       
       activeVaults = fetchedVaults;
-      notifyListeners();
-      debugPrint('🔥 TRACE: Successfully loaded ${activeVaults.length} vaults for user.');
       
     } catch (e) {
       debugPrint('🔥 TRACE: Failed global vault fetch: $e');
+    } finally {
+      isSyncingVaults = false;
+      notifyListeners();
     }
   }
 
@@ -531,7 +544,7 @@ class CeloWalletProvider extends ChangeNotifier {
         targetAddress = directWalletAddress!.toLowerCase();
       }
 
-      loadingStatus = "Approving $tokenSymbol...";
+      loadingStatus = isEmailMode ? "Step 1 of 3: Approving $tokenSymbol..." : "Step 1 of 2: Approving $tokenSymbol...";
       notifyListeners();
       final erc20Contract = DeployedContract(ContractAbi.fromJson(_erc20Abi, 'ERC20'), EthereumAddress.fromHex(tokenAddr, enforceEip55: false));
       final approveFunc = erc20Contract.function('approve');
@@ -542,7 +555,7 @@ class CeloWalletProvider extends ChangeNotifier {
       
       await sendAndWait(to: tokenAddr, data: approveData, actionName: "ERC20 Approval");
 
-      loadingStatus = "Locking Vault on-chain...";
+      loadingStatus = isEmailMode ? "Step 2 of 3: Locking Vault On-Chain..." : "Step 2 of 2: Locking Vault On-Chain...";
       notifyListeners();
       final llContract = DeployedContract(ContractAbi.fromJson(_lifeLineAbi, 'LifeLine'), EthereumAddress.fromHex(AppConstants.lifeLineContract, enforceEip55: false));
       final counterFunc = llContract.function('vaultCounter');
@@ -563,7 +576,7 @@ class CeloWalletProvider extends ChangeNotifier {
       await sendAndWait(to: AppConstants.lifeLineContract, data: createData, actionName: "Create Vault");
 
       if (isEmailMode) {
-        loadingStatus = "Funding claim gas...";
+        loadingStatus = "Step 3 of 3: Pre-funding Claim Link...";
         notifyListeners();
         await sendAndWait(to: targetAddress, data: "0x", value: "0x470DE4DF820000", actionName: "Gas Funding");
 
@@ -800,7 +813,13 @@ class _MobileAppShellState extends State<MobileAppShell> {
     return Scaffold(
       backgroundColor: AppTheme.bg,
       body: SafeArea(
-        child: AnimatedSwitcher(duration: const Duration(milliseconds: 300), transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child), child: _getScreenWidget()),
+        child: SelectionArea(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300), 
+            transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child), 
+            child: _getScreenWidget()
+          ),
+        ),
       ),
     );
   }
@@ -829,7 +848,7 @@ class _MobileAppShellState extends State<MobileAppShell> {
 }
 
 // ==============================================================
-// 5. MOBILE SCREENS
+// 5. MOBILE / WEB SCREENS
 // ==============================================================
 class WelcomeScreen extends StatefulWidget {
   final VoidCallback onNext;
@@ -838,7 +857,51 @@ class WelcomeScreen extends StatefulWidget {
 }
 
 class _WelcomeScreenState extends State<WelcomeScreen> {
-  final ScrollController _scrollController = ScrollController();
+  final PageController _pageController = PageController();
+  final FocusNode _focusNode = FocusNode();
+  int _currentPage = 0;
+
+  final List<Map<String, dynamic>> _pages = [
+    {
+      "title": "Welcome to LifeLine",
+      "description": "The decentralized inheritance protocol. Secure your crypto assets and ensure they pass to your loved ones when you can't be there.",
+      "icon": LucideIcons.shieldCheck,
+      "color": AppTheme.gold
+    },
+    {
+      "title": "Zero Counterparty Risk",
+      "description": "Your assets are locked in a Celo smart contract. No central authority can touch them. Only your mathematical proof can unlock them.",
+      "icon": LucideIcons.lock,
+      "color": AppTheme.green
+    },
+    {
+      "title": "Proof of Life Timer", 
+      "description": "Set a custom inactivity duration. As long as you ping the app, your vault stays locked. If your timer expires, it safely unlocks for your beneficiary.",
+      "icon": LucideIcons.timer,
+      "color": AppTheme.orange
+    },
+    {
+      "title": "Ready to Start?", 
+      "description": "Connect your Web3 wallet or open via MiniPay to deploy your first secure legacy vault.",
+      "icon": LucideIcons.wallet,
+      "color": AppTheme.green
+    }
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    _pageController.dispose();
+    super.dispose();
+  }
 
   void _showWalletSelector(BuildContext context, CeloWalletProvider wallet) {
     if (isMiniPay()) {
@@ -846,7 +909,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       wallet.connectProvider(ethereum, context).then((_) {
         if (wallet.isConnected) widget.onNext();
       });
-      return;
+      return; 
     }
 
     showDialog(
@@ -907,48 +970,142 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     );
   }
 
-  @override Widget build(BuildContext context) {
+  @override 
+  Widget build(BuildContext context) {
     final wallet = context.watch<CeloWalletProvider>();
-    return KeyboardScrollWrapper(
-      controller: _scrollController,
-      child: SingleChildScrollView(
-        controller: _scrollController,
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            const SizedBox(height: 60),
-            Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: AppTheme.gold.withOpacity(0.08), border: Border.all(color: AppTheme.gold.withOpacity(0.2)), borderRadius: BorderRadius.circular(20)), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 6, height: 6, decoration: const BoxDecoration(color: AppTheme.gold, shape: BoxShape.circle)), const SizedBox(width: 8), const Text("Celo Mainnet", style: TextStyle(color: AppTheme.gold, fontSize: 12, fontWeight: FontWeight.w500))])),
-            const SizedBox(height: 24),
-            Container(width: 80, height: 80, decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF0D3322), Color(0xFF1A5C3A)]), borderRadius: BorderRadius.circular(24), border: Border.all(color: AppTheme.green.withOpacity(0.3))), child: const Icon(LucideIcons.shieldCheck, color: AppTheme.green, size: 40)),
-            const SizedBox(height: 24),
-            
-            // EXPLANATORY UX UPDATES
-            const Text("LifeLine Protocol", style: TextStyle(color: AppTheme.green, fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: 2)),
-            const SizedBox(height: 8),
-            Text("Your Digital Legacy,\nSecured On-Chain", textAlign: TextAlign.center, style: GoogleFonts.cormorantGaramond(fontSize: 32, fontWeight: FontWeight.w600, height: 1.1)),
-            const SizedBox(height: 16),
-            const Text(
-              "LifeLine ensures your crypto assets are safely passed on to your loved ones if you become inactive.\n\n"
-              "1. Lock assets in a secure smart contract vault.\n"
-              "2. Set an inactivity timer (e.g., 6 months).\n"
-              "3. Ping occasionally to prove you're active.\n"
-              "4. If the timer expires, an automated email sends the claim link to your heir.",
-              style: TextStyle(color: AppTheme.muted, fontSize: 14, height: 1.6),
-            ),
-            const SizedBox(height: 40),
-            
-            if (wallet.errorMessage != null) Padding(padding: const EdgeInsets.only(bottom: 16.0), child: Text(wallet.errorMessage!, textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.red, fontSize: 13, fontWeight: FontWeight.w500))),
-            if (wallet.isLoading) Padding(padding: const EdgeInsets.symmetric(vertical: 24.0), child: Column(children: [const CircularProgressIndicator(color: AppTheme.green), const SizedBox(height: 12), Text(wallet.loadingStatus, style: const TextStyle(color: AppTheme.muted, fontSize: 12))]))
-            else ...[
-              InkWell(
-                onTap: () => _showWalletSelector(context, wallet),
-                borderRadius: BorderRadius.circular(16),
-                child: Container(width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 18), decoration: BoxDecoration(color: AppTheme.gold.withOpacity(0.12), border: Border.all(color: AppTheme.gold.withOpacity(0.25)), borderRadius: BorderRadius.circular(16)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(LucideIcons.wallet, color: AppTheme.gold, size: 18), const SizedBox(width: 8), Text(isMiniPay() ? "Open in MiniPay" : "Connect Web3 Wallet", style: const TextStyle(color: AppTheme.gold, fontSize: 15, fontWeight: FontWeight.w600))])),
+    
+    return Scaffold(
+      backgroundColor: AppTheme.bg,
+      body: SafeArea(
+        child: Focus(
+          focusNode: _focusNode,
+          autofocus: true,
+          onKeyEvent: (node, event) {
+            if (event is KeyDownEvent || event is KeyRepeatEvent) {
+              if (event.logicalKey == LogicalKeyboardKey.arrowRight || event.logicalKey == LogicalKeyboardKey.pageDown || event.logicalKey == LogicalKeyboardKey.space) {
+                if (_currentPage < _pages.length - 1) {
+                  _pageController.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+                  return KeyEventResult.handled;
+                }
+              } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft || event.logicalKey == LogicalKeyboardKey.pageUp) {
+                if (_currentPage > 0) {
+                  _pageController.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+                  return KeyEventResult.handled;
+                }
+              }
+            }
+            return KeyEventResult.ignored;
+          },
+          child: Center(
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 600),
+              child: Column(
+                children: [
+                  const SizedBox(height: 20),
+                  Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: AppTheme.gold.withOpacity(0.08), border: Border.all(color: AppTheme.gold.withOpacity(0.2)), borderRadius: BorderRadius.circular(20)), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 6, height: 6, decoration: const BoxDecoration(color: AppTheme.gold, shape: BoxShape.circle)), const SizedBox(width: 8), const Text("Celo Mainnet", style: TextStyle(color: AppTheme.gold, fontSize: 12, fontWeight: FontWeight.w500))])),
+                  
+                  Expanded(
+                    child: PageView.builder(
+                      controller: _pageController,
+                      onPageChanged: (int page) => setState(() => _currentPage = page),
+                      itemCount: _pages.length,
+                      itemBuilder: (context, index) {
+                        return Padding(
+                          padding: const EdgeInsets.all(40.0),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                width: 100, height: 100,
+                                decoration: BoxDecoration(
+                                  color: _pages[index]["color"].withOpacity(0.1),
+                                  border: Border.all(color: _pages[index]["color"].withOpacity(0.3)),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  _pages[index]["icon"],
+                                  size: 48,
+                                  color: _pages[index]["color"],
+                                ),
+                              ),
+                              const SizedBox(height: 40),
+                              Text(
+                                _pages[index]["title"],
+                                style: GoogleFonts.cormorantGaramond(fontSize: 32, fontWeight: FontWeight.w600, color: AppTheme.cream),
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 20),
+                              Text(
+                                _pages[index]["description"],
+                                style: const TextStyle(fontSize: 15, color: AppTheme.muted, height: 1.6),
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  
+                  if (wallet.errorMessage != null) Padding(padding: const EdgeInsets.symmetric(horizontal: 40.0, vertical: 10.0), child: Text(wallet.errorMessage!, textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.red, fontSize: 13, fontWeight: FontWeight.w500))),
+                  if (wallet.isLoading) Padding(padding: const EdgeInsets.symmetric(vertical: 24.0), child: Column(children: [const CircularProgressIndicator(color: AppTheme.green), const SizedBox(height: 12), Text(wallet.loadingStatus, style: const TextStyle(color: AppTheme.muted, fontSize: 12))])),
+
+                  if (!wallet.isLoading)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(
+                        _pages.length,
+                        (index) => AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          margin: const EdgeInsets.symmetric(horizontal: 4),
+                          height: 6,
+                          width: _currentPage == index ? 24 : 6,
+                          decoration: BoxDecoration(
+                            color: _currentPage == index ? AppTheme.green : AppTheme.card2,
+                            border: Border.all(color: _currentPage == index ? AppTheme.green : AppTheme.border),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ),
+                    ),
+                  
+                  const SizedBox(height: 40),
+                  
+                  if (!wallet.isLoading)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 40.0, right: 40.0, bottom: 40.0),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _currentPage == _pages.length - 1 ? AppTheme.card : AppTheme.green,
+                            side: _currentPage == _pages.length - 1 ? const BorderSide(color: AppTheme.green) : BorderSide.none,
+                            padding: const EdgeInsets.symmetric(vertical: 20),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            elevation: 0,
+                          ),
+                          onPressed: () {
+                            if (_currentPage == _pages.length - 1) {
+                              _showWalletSelector(context, wallet);
+                            } else {
+                              _pageController.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+                            }
+                          },
+                          child: Text(
+                            _currentPage == _pages.length - 1 ? (isMiniPay() ? "Open in MiniPay" : "Connect Web3 Wallet") : "Next",
+                            style: TextStyle(
+                              fontSize: 16, 
+                              fontWeight: FontWeight.w600, 
+                              color: _currentPage == _pages.length - 1 ? AppTheme.green : AppTheme.bg
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
-            ],
-            const SizedBox(height: 20),
-            const Text("Multi-Wallet support natively enabled.", style: TextStyle(color: AppTheme.muted, fontSize: 11)),
-          ],
+            ),
+          ),
         ),
       ),
     );
@@ -966,6 +1123,134 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   final ScrollController _scrollController = ScrollController();
+  
+  Widget _buildVaultCard(BuildContext context, Map<String, dynamic> vault, String type, String amt, String sym, String time, bool isExpired, VoidCallback onTap) {
+    final bool isActive = vault['isActive'] ?? true;
+    final int vaultId = vault['id'];
+
+    String status = "ACTIVE";
+    if (!isActive) {
+      status = "CLOSED";
+    } else if (isExpired) {
+      status = "UNLOCKED";
+    }
+
+    Widget cardContent = Container(
+      margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(18)),
+      child: Column(
+        children: [
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("Vault #$vaultId", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)), const SizedBox(height: 4), Text(type, style: const TextStyle(fontSize: 12, color: AppTheme.muted))]), 
+            if (status == "ACTIVE")
+              Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: AppTheme.green.withOpacity(0.1), border: Border.all(color: AppTheme.green.withOpacity(0.2)), borderRadius: BorderRadius.circular(8)), child: const Text("Active", style: TextStyle(fontSize: 11, color: AppTheme.green, fontWeight: FontWeight.w600)))
+            else if (status == "UNLOCKED")
+              Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: AppTheme.orange.withOpacity(0.1), border: Border.all(color: AppTheme.orange.withOpacity(0.2)), borderRadius: BorderRadius.circular(8)), child: const Text("Unlocked", style: TextStyle(fontSize: 11, color: AppTheme.orange, fontWeight: FontWeight.w600)))
+            else
+              Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: AppTheme.red.withOpacity(0.1), border: Border.all(color: AppTheme.red.withOpacity(0.2)), borderRadius: BorderRadius.circular(8)), child: const Text("Closed", style: TextStyle(fontSize: 11, color: AppTheme.red, fontWeight: FontWeight.w600)))
+          ]),
+          const SizedBox(height: 16),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, crossAxisAlignment: CrossAxisAlignment.end, children: [
+            RichText(text: TextSpan(children: [TextSpan(text: "$amt ", style: GoogleFonts.cormorantGaramond(fontSize: 24, fontWeight: FontWeight.w600, color: AppTheme.cream)), TextSpan(text: sym, style: const TextStyle(fontSize: 14, color: AppTheme.muted, fontWeight: FontWeight.w500))])), 
+            if (status == "ACTIVE")
+              Row(children: [Container(width: 6, height: 6, decoration: const BoxDecoration(color: AppTheme.orange, shape: BoxShape.circle)), const SizedBox(width: 6), Text(time, style: GoogleFonts.spaceMono(fontSize: 13, color: AppTheme.orange, fontWeight: FontWeight.w600))])
+          ]),
+          if (status == "UNLOCKED") ...[
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(16), width: double.infinity,
+              decoration: BoxDecoration(color: AppTheme.orange.withOpacity(0.1), borderRadius: BorderRadius.circular(8), border: Border.all(color: AppTheme.orange.withOpacity(0.3))),
+              child: Column(
+                children: [
+                  const Text("VAULT UNLOCKED 🔓", style: TextStyle(color: AppTheme.orange, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                  const SizedBox(height: 12),
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Icon(Icons.info_outline, size: 16, color: AppTheme.orange),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text("Secure access link has been sent. Please advise the beneficiary to check their Spam/Junk folder.", style: TextStyle(color: AppTheme.muted, fontSize: 13, height: 1.4))),
+                  ]),
+                ],
+              ),
+            )
+          ],
+          if (status == "CLOSED") ...[
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), 
+              width: double.infinity,
+              decoration: BoxDecoration(color: AppTheme.green.withOpacity(0.05), borderRadius: BorderRadius.circular(8), border: Border.all(color: AppTheme.green.withOpacity(0.2))),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text("VAULT CLAIMED / CANCELLED ✓", style: TextStyle(color: AppTheme.green, fontWeight: FontWeight.bold, letterSpacing: 1.2, fontSize: 11)),
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: () {
+                        showDialog(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            backgroundColor: AppTheme.card,
+                            title: const Text("Dismiss Vault History?", style: TextStyle(color: AppTheme.cream)),
+                            content: const Text("This will permanently hide this closed vault from your dashboard view. It remains stored on the blockchain safely.", style: TextStyle(color: AppTheme.muted)),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel", style: TextStyle(color: AppTheme.muted))),
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.red),
+                                onPressed: () {
+                                  Navigator.pop(ctx);
+                                  final provider = Provider.of<CeloWalletProvider>(context, listen: false);
+                                  provider.dismissVault(vaultId);
+                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vault removed from local view."), backgroundColor: AppTheme.muted));
+                                },
+                                child: const Text("Dismiss", style: TextStyle(color: AppTheme.cream)),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(color: AppTheme.card, borderRadius: BorderRadius.circular(6), border: Border.all(color: AppTheme.border)),
+                        child: Row(
+                          children: const [
+                            Icon(LucideIcons.trash, size: 14, color: AppTheme.muted),
+                            SizedBox(width: 6),
+                            Text("Dismiss", style: TextStyle(fontSize: 11, color: AppTheme.muted, fontWeight: FontWeight.w600))
+                          ]
+                        )
+                      )
+                    )
+                  )
+                ]
+              ),
+            )
+          ]
+        ],
+      ),
+    );
+
+    if (status == "CLOSED") {
+      return Dismissible(
+        key: Key('vault_$vaultId'),
+        direction: DismissDirection.endToStart,
+        background: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(color: AppTheme.red, borderRadius: BorderRadius.circular(18)),
+          alignment: Alignment.centerRight, padding: const EdgeInsets.only(right: 20),
+          child: const Icon(LucideIcons.trash, color: AppTheme.cream),
+        ),
+        onDismissed: (direction) {
+          final provider = Provider.of<CeloWalletProvider>(context, listen: false);
+          provider.dismissVault(vaultId);
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vault removed from local view."), backgroundColor: AppTheme.muted));
+        },
+        child: cardContent,
+      );
+    }
+
+    return MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(onTap: onTap, child: cardContent));
+  }
+
   @override Widget build(BuildContext context) {
     final wallet = context.watch<CeloWalletProvider>();
     final shortAddress = wallet.userAddress != null ? "${wallet.userAddress!.substring(0,6)}...${wallet.userAddress!.substring(wallet.userAddress!.length - 4)}" : "Not Connected";
@@ -992,7 +1277,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         Container(margin: const EdgeInsets.only(top: 6), padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(8)), child: Row(children: [Container(width: 6, height: 6, decoration: const BoxDecoration(color: Color(0xFF4CD9A0), shape: BoxShape.circle)), const SizedBox(width: 6), Text(shortAddress, style: GoogleFonts.spaceMono(fontSize: 11, color: AppTheme.muted, fontWeight: FontWeight.w600))]))
                       ],
                     ),
-                    // DISCONNECT WALLET BUTTON LOGIC ADDED HERE
                     InkWell(
                       onTap: () {
                          wallet.disconnectWallet();
@@ -1011,17 +1295,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     children: [
                       const Text("TOTAL AVAILABLE", style: TextStyle(fontSize: 11, color: AppTheme.muted, letterSpacing: 1, fontWeight: FontWeight.w600)),
                       const SizedBox(height: 4),
-                      RichText(text: TextSpan(children: [TextSpan(text: wallet.tokenBalances['USDC']?.toStringAsFixed(2) ?? "0.00", style: GoogleFonts.cormorantGaramond(fontSize: 36, fontWeight: FontWeight.w600, color: AppTheme.cream)), const TextSpan(text: " USDC", style: TextStyle(fontSize: 16, color: AppTheme.green, fontWeight: FontWeight.w500))])),
+                      RichText(text: TextSpan(children: [
+                        TextSpan(text: wallet.isSyncingBalances ? "..." : (wallet.tokenBalances['USDC']?.toStringAsFixed(2) ?? "0.00"), style: GoogleFonts.cormorantGaramond(fontSize: 36, fontWeight: FontWeight.w600, color: AppTheme.cream)), 
+                        const TextSpan(text: " USDC", style: TextStyle(fontSize: 16, color: AppTheme.green, fontWeight: FontWeight.w500))
+                      ])),
                       const SizedBox(height: 16),
-                      Row(children: [_buildMiniBal("CELO", wallet.tokenBalances['CELO']?.toStringAsFixed(2) ?? "0.00")])
+                      Row(children: [_buildMiniBal("CELO", wallet.isSyncingBalances ? "..." : (wallet.tokenBalances['CELO']?.toStringAsFixed(2) ?? "0.00"))])
                     ],
                   ),
                 ),
                 const SizedBox(height: 28),
-                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("My Vaults", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AppTheme.cream)), GestureDetector(onTap: widget.onCreateClick, child: const Text("+ New Vault", style: TextStyle(fontSize: 13, color: AppTheme.green, fontWeight: FontWeight.w500)))]),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  const Text("My Vaults", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AppTheme.cream)), 
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: widget.onCreateClick, 
+                      child: const Text("+ New Vault", style: TextStyle(fontSize: 13, color: AppTheme.green, fontWeight: FontWeight.w500))
+                    )
+                  )
+                ]),
                 const SizedBox(height: 16),
                 
-                if (wallet.activeVaults.isEmpty)
+                if (wallet.isSyncingVaults && wallet.activeVaults.isEmpty)
+                  const Padding(padding: EdgeInsets.all(40), child: Center(child: CircularProgressIndicator(color: AppTheme.green)))
+                else if (wallet.activeVaults.isEmpty && !wallet.isSyncingVaults)
                   Container(padding: const EdgeInsets.all(32), decoration: BoxDecoration(color: AppTheme.card2, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppTheme.border)), child: const Center(child: Text("No active vaults found.", style: TextStyle(color: AppTheme.muted, fontSize: 13))))
                 else
                   ...wallet.activeVaults.map((vault) {
@@ -1033,7 +1331,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       onExpire: () => wallet.autoDispatchEmail(vault['id'], context),
                       builder: (days, hrs, mins, secs, isExpired) {
                         final timeLabel = isExpired ? "EXPIRED" : "${days}d ${hrs}h ${mins}m";
-                        return _buildVaultCard("Vault #${vault['id']}", typeLabel, vault['balance'].toStringAsFixed(2), vault['tokenSymbol'], timeLabel, isExpired, () => widget.onVaultClick(vault['id']));
+                        return _buildVaultCard(context, vault, typeLabel, vault['balance'].toStringAsFixed(2), vault['tokenSymbol'], timeLabel, isExpired, () => widget.onVaultClick(vault['id']));
                       }
                     );
                   }).toList(),
@@ -1050,22 +1348,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildMiniBal(String sym, String val) {
     return Expanded(child: Container(padding: const EdgeInsets.symmetric(vertical: 10), decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(10)), child: Column(children: [Text(sym, style: const TextStyle(fontSize: 11, color: AppTheme.muted, fontWeight: FontWeight.w600)), const SizedBox(height: 4), Text(val, style: GoogleFonts.spaceMono(fontSize: 12, color: AppTheme.cream, fontWeight: FontWeight.w600))])));
-  }
-
-  Widget _buildVaultCard(String name, String type, String amt, String sym, String time, bool isExpired, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(18)),
-        child: Column(
-          children: [
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)), const SizedBox(height: 4), Text(type, style: const TextStyle(fontSize: 12, color: AppTheme.muted))]), Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: AppTheme.green.withOpacity(0.1), border: Border.all(color: AppTheme.green.withOpacity(0.2)), borderRadius: BorderRadius.circular(8)), child: const Text("Active", style: TextStyle(fontSize: 11, color: AppTheme.green, fontWeight: FontWeight.w600)))]),
-            const SizedBox(height: 16),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, crossAxisAlignment: CrossAxisAlignment.end, children: [RichText(text: TextSpan(children: [TextSpan(text: "$amt ", style: GoogleFonts.cormorantGaramond(fontSize: 24, fontWeight: FontWeight.w600, color: AppTheme.cream)), TextSpan(text: sym, style: const TextStyle(fontSize: 14, color: AppTheme.muted, fontWeight: FontWeight.w500))])), Row(children: [Container(width: 6, height: 6, decoration: BoxDecoration(color: isExpired ? AppTheme.red : AppTheme.orange, shape: BoxShape.circle)), const SizedBox(width: 6), Text(time, style: GoogleFonts.spaceMono(fontSize: 13, color: isExpired ? AppTheme.red : AppTheme.orange, fontWeight: FontWeight.w600))])])
-          ],
-        ),
-      ),
-    );
   }
 }
 
@@ -1136,9 +1418,28 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
     }
   }
 
+  Widget _buildStepperRow(String text, int status) {
+    Color color = status == 2 ? AppTheme.green : (status == 1 ? AppTheme.orange : AppTheme.muted);
+    IconData icon = status == 2 ? LucideIcons.checkCircle : (status == 1 ? LucideIcons.loader : LucideIcons.circle);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16.0),
+      child: Row(
+        children: [
+          if (status == 1)
+            const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: AppTheme.orange, strokeWidth: 2))
+          else
+            Icon(icon, color: color, size: 20),
+          const SizedBox(width: 16),
+          Text(text, style: TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.w600)),
+        ]
+      )
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final wallet = context.watch<CeloWalletProvider>();
+    final double? parsedAmount = double.tryParse(_amountCtrl.text);
 
     return KeyboardScrollWrapper(
       controller: _scrollController,
@@ -1146,14 +1447,46 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
         controller: _scrollController,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
         children: [
-          Row(children: [GestureDetector(onTap: widget.onBack, child: Container(width: 40, height: 40, decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(12)), child: const Icon(LucideIcons.chevronLeft, size: 20, color: AppTheme.cream))), const SizedBox(width: 16), Text("New Vault", style: GoogleFonts.cormorantGaramond(fontSize: 24, fontWeight: FontWeight.w600))]),
+          Row(children: [
+            MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: widget.onBack, 
+                child: Container(width: 40, height: 40, decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(12)), child: const Icon(LucideIcons.chevronLeft, size: 20, color: AppTheme.cream))
+              )
+            ), 
+            const SizedBox(width: 16), 
+            Text("New Vault", style: GoogleFonts.cormorantGaramond(fontSize: 24, fontWeight: FontWeight.w600))
+          ]),
           const SizedBox(height: 28),
           
           const Text("BENEFICIARY", style: TextStyle(fontSize: 12, color: AppTheme.muted, letterSpacing: 0.5, fontWeight: FontWeight.w600)),
           const SizedBox(height: 12),
           _buildTextField(_nameCtrl, "Heir Name (e.g. Mama Ngozi)"),
           const SizedBox(height: 12),
-          Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(14)), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("Email claim", style: TextStyle(fontSize: 15, color: AppTheme.cream, fontWeight: FontWeight.w500)), SizedBox(height: 4), Text("Require PIN to unlock", style: TextStyle(fontSize: 12, color: AppTheme.muted))]), Switch(value: emailMode, onChanged: (v) => setState(() => emailMode = v), activeColor: AppTheme.green, activeTrackColor: AppTheme.green.withOpacity(0.3))])),
+          
+          Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(14)), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(
+                children: [
+                  const Text("Email claim", style: TextStyle(fontSize: 15, color: AppTheme.cream, fontWeight: FontWeight.w500)),
+                  const SizedBox(width: 6),
+                  Tooltip(
+                    message: "We generate a secure key and pre-fund it with gas so your heir can claim without needing crypto.",
+                    margin: const EdgeInsets.symmetric(horizontal: 24),
+                    padding: const EdgeInsets.all(12),
+                    textStyle: const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: BoxDecoration(color: AppTheme.card, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(8)),
+                    child: const Icon(LucideIcons.info, size: 16, color: AppTheme.muted),
+                  )
+                ],
+              ), 
+              const SizedBox(height: 4), 
+              const Text("Require PIN to unlock", style: TextStyle(fontSize: 12, color: AppTheme.muted))
+            ]), 
+            Switch(value: emailMode, onChanged: (v) => setState(() => emailMode = v), activeColor: AppTheme.green, activeTrackColor: AppTheme.green.withOpacity(0.3))
+          ])),
+          
           const SizedBox(height: 12),
           if (emailMode) ...[
             _buildTextField(_emailCtrl, "heir@example.com"), const SizedBox(height: 12), 
@@ -1165,9 +1498,28 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
           const SizedBox(height: 28),
           const Text("ASSET TO LOCK", style: TextStyle(fontSize: 12, color: AppTheme.muted, letterSpacing: 0.5, fontWeight: FontWeight.w600)),
           const SizedBox(height: 12),
-          Row(children: ["USDC", "CELO"].map((t) => Expanded(child: GestureDetector(onTap: () => setState(() => selectedToken = t), child: AnimatedContainer(duration: const Duration(milliseconds: 200), margin: const EdgeInsets.only(right: 10), padding: const EdgeInsets.symmetric(vertical: 14), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: selectedToken == t ? AppTheme.green : AppTheme.border), borderRadius: BorderRadius.circular(12)), child: Center(child: Text(t, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: selectedToken == t ? AppTheme.green : AppTheme.muted))))))).toList()),
+          Row(children: ["USDC", "CELO"].map((t) => Expanded(
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () => setState(() => selectedToken = t), 
+                child: AnimatedContainer(duration: const Duration(milliseconds: 200), margin: const EdgeInsets.only(right: 10), padding: const EdgeInsets.symmetric(vertical: 14), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: selectedToken == t ? AppTheme.green : AppTheme.border), borderRadius: BorderRadius.circular(12)), child: Center(child: Text(t, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: selectedToken == t ? AppTheme.green : AppTheme.muted))))
+              )
+            )
+          )).toList()),
           const SizedBox(height: 12),
-          _buildTextField(_amountCtrl, "Amount", isNumber: true),
+          StatefulBuilder(
+            builder: (context, setInnerState) => Container(
+              decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(12)),
+              child: TextField(
+                controller: _amountCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: const TextStyle(fontSize: 15, color: AppTheme.cream),
+                onChanged: (v) => setState((){}), 
+                decoration: InputDecoration(contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16), border: InputBorder.none, hintText: "Amount", counterText: "", hintStyle: const TextStyle(color: AppTheme.muted)),
+              ),
+            ),
+          ),
           Padding(padding: const EdgeInsets.only(top: 8.0, left: 4), child: Text("Available: ${wallet.tokenBalances[selectedToken]?.toStringAsFixed(2) ?? '0.00'} $selectedToken", style: const TextStyle(color: AppTheme.muted, fontSize: 11))),
           
           const SizedBox(height: 28),
@@ -1198,11 +1550,52 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
           ]),
           
           const SizedBox(height: 36),
-          InkWell(
-            onTap: wallet.isLoading ? null : () => _handleCreateVault(wallet),
-            borderRadius: BorderRadius.circular(16),
-            child: Container(width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 18), decoration: BoxDecoration(color: wallet.isLoading ? AppTheme.muted : AppTheme.green, borderRadius: BorderRadius.circular(16)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [wallet.isLoading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: AppTheme.bg, strokeWidth: 2)) : const Icon(LucideIcons.lock, color: AppTheme.bg, size: 18), const SizedBox(width: 8), Text(wallet.isLoading ? wallet.loadingStatus : "Initialize & Lock Vault", style: const TextStyle(color: AppTheme.bg, fontSize: 16, fontWeight: FontWeight.w600))])),
-          ),
+
+          if (parsedAmount != null && parsedAmount > 0)
+            Container(
+              padding: const EdgeInsets.all(16),
+              margin: const EdgeInsets.only(bottom: 24),
+              decoration: BoxDecoration(color: AppTheme.green.withOpacity(0.05), border: Border.all(color: AppTheme.green.withOpacity(0.2)), borderRadius: BorderRadius.circular(12)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Transaction Summary", style: TextStyle(color: AppTheme.cream, fontSize: 14, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 12),
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("Asset to Lock", style: TextStyle(color: AppTheme.muted, fontSize: 13)), Text("${_amountCtrl.text} $selectedToken", style: const TextStyle(color: AppTheme.cream, fontSize: 13, fontWeight: FontWeight.w600))]),
+                  if (emailMode) ...[
+                    const SizedBox(height: 8),
+                    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("Claim Link Gas Fee", style: TextStyle(color: AppTheme.muted, fontSize: 13)), const Text("0.02 CELO", style: TextStyle(color: AppTheme.cream, fontSize: 13, fontWeight: FontWeight.w600))]),
+                  ],
+                  const SizedBox(height: 12),
+                  const Divider(color: AppTheme.border),
+                  const SizedBox(height: 8),
+                  Text(emailMode ? "Note: You will be asked to sign up to 3 transactions to ensure complete decentralized security." : "Note: You will be asked to sign up to 2 transactions to ensure decentralized security.", style: const TextStyle(color: AppTheme.green, fontSize: 11, fontStyle: FontStyle.italic)),
+                ]
+              )
+            ),
+
+          if (wallet.isLoading)
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(color: AppTheme.card2, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppTheme.border)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Deploying Vault", style: TextStyle(color: AppTheme.cream, fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 20),
+                  _buildStepperRow("Approve Asset", wallet.loadingStatus.contains("Step 1") ? 1 : (wallet.loadingStatus.contains("Step 2") || wallet.loadingStatus.contains("Step 3") ? 2 : 0)),
+                  _buildStepperRow("Lock Vault On-Chain", wallet.loadingStatus.contains("Step 2") ? 1 : (wallet.loadingStatus.contains("Step 3") ? 2 : 0)),
+                  if (emailMode)
+                    _buildStepperRow("Pre-fund Claim Link", wallet.loadingStatus.contains("Step 3") ? 1 : 0),
+                ]
+              )
+            )
+          else
+            InkWell(
+              onTap: () => _handleCreateVault(wallet),
+              borderRadius: BorderRadius.circular(16),
+              child: Container(width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 18), decoration: BoxDecoration(color: AppTheme.green, borderRadius: BorderRadius.circular(16)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: const [Icon(LucideIcons.lock, color: AppTheme.bg, size: 18), SizedBox(width: 8), Text("Initialize & Lock Vault", style: TextStyle(color: AppTheme.bg, fontSize: 16, fontWeight: FontWeight.w600))])),
+            ),
           const SizedBox(height: 40),
         ],
       ),
@@ -1329,13 +1722,25 @@ class _VaultDetailScreenState extends State<VaultDetailScreen> {
     
     if (vault.isEmpty) return const Scaffold(backgroundColor: AppTheme.bg, body: Center(child: CircularProgressIndicator(color: AppTheme.green)));
 
+    final bool isActiveOnChain = vault['isActive'] ?? true;
+
     return KeyboardScrollWrapper(
       controller: _scrollController,
       child: ListView(
         controller: _scrollController,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
         children: [
-          Row(children: [GestureDetector(onTap: widget.onBack, child: Container(width: 40, height: 40, decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(12)), child: const Icon(LucideIcons.chevronLeft, size: 20, color: AppTheme.cream))), const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("Vault #${widget.vaultId}", style: GoogleFonts.cormorantGaramond(fontSize: 26, fontWeight: FontWeight.w600)), const SizedBox(height: 4), Text("${vault['balance'].toStringAsFixed(2)} ${vault['tokenSymbol']}", style: const TextStyle(fontSize: 13, color: AppTheme.muted))]))]),
+          Row(children: [
+            MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: widget.onBack, 
+                child: Container(width: 40, height: 40, decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(12)), child: const Icon(LucideIcons.chevronLeft, size: 20, color: AppTheme.cream))
+              )
+            ), 
+            const SizedBox(width: 16), 
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("Vault #${widget.vaultId}", style: GoogleFonts.cormorantGaramond(fontSize: 26, fontWeight: FontWeight.w600)), const SizedBox(height: 4), Text("${vault['balance'].toStringAsFixed(2)} ${vault['tokenSymbol']}", style: const TextStyle(fontSize: 13, color: AppTheme.muted))]))
+          ]),
           const SizedBox(height: 28),
           Container(
             padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16), decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF0F2D1E), Color(0xFF0D1E16)]), border: Border.all(color: AppTheme.green.withOpacity(0.12)), borderRadius: BorderRadius.circular(20)),
@@ -1354,42 +1759,71 @@ class _VaultDetailScreenState extends State<VaultDetailScreen> {
             ),
           ),
           const SizedBox(height: 20),
-          InkWell(
-            onTap: wallet.isLoading ? null : () async {
-              final success = await wallet.pingVault(widget.vaultId);
-              if (success && context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Timer Reset Successfully"), backgroundColor: AppTheme.green));
-              else if (!success && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(wallet.errorMessage ?? "Failed"), backgroundColor: AppTheme.red));
-            },
-            child: Container(width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 20), decoration: BoxDecoration(color: wallet.isLoading ? AppTheme.muted : AppTheme.green, borderRadius: BorderRadius.circular(16)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [wallet.isLoading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: AppTheme.bg, strokeWidth: 2)) : const Icon(LucideIcons.heartPulse, color: AppTheme.bg, size: 20), const SizedBox(width: 8), Text(wallet.isLoading ? wallet.loadingStatus : "I'm Alive — Reset Timer", style: const TextStyle(color: AppTheme.bg, fontSize: 16, fontWeight: FontWeight.w600))])),
-          ),
-          const SizedBox(height: 28),
           
-          Row(children: [
-            Expanded(child: GestureDetector(onTap: () => _showAmountDialog(context, "Add Funds (${vault['tokenSymbol']})", (amountStr) async {
-              final success = await wallet.addFunds(widget.vaultId, vault['tokenSymbol'], amountStr);
-              if (success && context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Funds Added Successfully"), backgroundColor: AppTheme.green));
-              else if (!success && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(wallet.errorMessage ?? "Failed"), backgroundColor: AppTheme.red));
-            }), child: Container(padding: const EdgeInsets.symmetric(vertical: 16), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(14)), child: const Center(child: Text("+ Funds", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)))))), const SizedBox(width: 12),
+          if (isActiveOnChain) ...[
+            InkWell(
+              onTap: wallet.isLoading ? null : () async {
+                final success = await wallet.pingVault(widget.vaultId);
+                if (success && context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Timer Reset Successfully"), backgroundColor: AppTheme.green));
+                else if (!success && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(wallet.errorMessage ?? "Failed"), backgroundColor: AppTheme.red));
+              },
+              child: Container(width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 20), decoration: BoxDecoration(color: wallet.isLoading ? AppTheme.muted : AppTheme.green, borderRadius: BorderRadius.circular(16)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [wallet.isLoading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: AppTheme.bg, strokeWidth: 2)) : const Icon(LucideIcons.heartPulse, color: AppTheme.bg, size: 20), const SizedBox(width: 8), Text(wallet.isLoading ? wallet.loadingStatus : "I'm Alive — Reset Timer", style: const TextStyle(color: AppTheme.bg, fontSize: 16, fontWeight: FontWeight.w600))])),
+            ),
+            const SizedBox(height: 28),
             
-            Expanded(child: GestureDetector(onTap: () => _showAmountDialog(context, "Withdraw Funds (${vault['tokenSymbol']})", (amountStr) async {
-              final success = await wallet.withdrawFunds(widget.vaultId, vault['tokenSymbol'], amountStr);
-              if (success && context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Funds Withdrawn Successfully"), backgroundColor: AppTheme.green));
-              else if (!success && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(wallet.errorMessage ?? "Failed"), backgroundColor: AppTheme.red));
-            }), child: Container(padding: const EdgeInsets.symmetric(vertical: 16), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(14)), child: const Center(child: Text("Withdraw", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)))))), const SizedBox(width: 12),
-            
-            Expanded(child: GestureDetector(onTap: () => _showCancelConfirmation(context, () async {
-              final success = await wallet.cancelVault(widget.vaultId);
-              if (success && context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vault Cancelled Successfully"), backgroundColor: AppTheme.green));
-                widget.onBack();
-              } else if (!success && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(wallet.errorMessage ?? "Failed"), backgroundColor: AppTheme.red));
-            }), child: Container(padding: const EdgeInsets.symmetric(vertical: 16), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.red.withOpacity(0.3)), borderRadius: BorderRadius.circular(14)), child: const Center(child: Text("Cancel", style: TextStyle(fontSize: 14, color: AppTheme.red, fontWeight: FontWeight.w500)))))),
-          ]),
+            Row(children: [
+              Expanded(
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: () => _showAmountDialog(context, "Add Funds (${vault['tokenSymbol']})", (amountStr) async {
+                      final success = await wallet.addFunds(widget.vaultId, vault['tokenSymbol'], amountStr);
+                      if (success && context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Funds Added Successfully"), backgroundColor: AppTheme.green));
+                      else if (!success && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(wallet.errorMessage ?? "Failed"), backgroundColor: AppTheme.red));
+                    }), 
+                    child: Container(padding: const EdgeInsets.symmetric(vertical: 16), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(14)), child: const Center(child: Text("+ Funds", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500))))
+                  )
+                )
+              ), 
+              const SizedBox(width: 12),
+              
+              Expanded(
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: () => _showAmountDialog(context, "Withdraw Funds (${vault['tokenSymbol']})", (amountStr) async {
+                      final success = await wallet.withdrawFunds(widget.vaultId, vault['tokenSymbol'], amountStr);
+                      if (success && context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Funds Withdrawn Successfully"), backgroundColor: AppTheme.green));
+                      else if (!success && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(wallet.errorMessage ?? "Failed"), backgroundColor: AppTheme.red));
+                    }), 
+                    child: Container(padding: const EdgeInsets.symmetric(vertical: 16), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(14)), child: const Center(child: Text("Withdraw", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500))))
+                  )
+                )
+              ), 
+              const SizedBox(width: 12),
+              
+              Expanded(
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: () => _showCancelConfirmation(context, () async {
+                      final success = await wallet.cancelVault(widget.vaultId);
+                      if (success && context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vault Cancelled Successfully"), backgroundColor: AppTheme.green));
+                        widget.onBack();
+                      } else if (!success && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(wallet.errorMessage ?? "Failed"), backgroundColor: AppTheme.red));
+                    }), 
+                    child: Container(padding: const EdgeInsets.symmetric(vertical: 16), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.red.withOpacity(0.3)), borderRadius: BorderRadius.circular(14)), child: const Center(child: Text("Cancel", style: TextStyle(fontSize: 14, color: AppTheme.red, fontWeight: FontWeight.w500))))
+                  )
+                )
+              ),
+            ]),
+            const SizedBox(height: 28),
+          ],
           
-          const SizedBox(height: 28),
           Container(
             padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: AppTheme.green.withOpacity(0.05), border: Border.all(color: AppTheme.green.withOpacity(0.1)), borderRadius: BorderRadius.circular(16)),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text("Force dispatch email now", style: TextStyle(fontSize: 13, color: AppTheme.muted, fontWeight: FontWeight.w500)), const SizedBox(height: 10), Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("Test Inheritance Flow", style: TextStyle(fontSize: 14, color: AppTheme.cream)), GestureDetector(onTap: () => _triggerEmail(context, wallet), child: Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(10)), child: const Text("Trigger", style: TextStyle(fontSize: 13, color: AppTheme.muted, fontWeight: FontWeight.w600))))])])
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text("Force dispatch email now", style: TextStyle(fontSize: 13, color: AppTheme.muted, fontWeight: FontWeight.w500)), const SizedBox(height: 10), Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("Test Inheritance Flow", style: TextStyle(fontSize: 14, color: AppTheme.cream)), MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(onTap: () => _triggerEmail(context, wallet), child: Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), decoration: BoxDecoration(color: AppTheme.card2, border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(10)), child: const Text("Trigger", style: TextStyle(fontSize: 13, color: AppTheme.muted, fontWeight: FontWeight.w600)))))])])
           ),
           const SizedBox(height: 40),
         ],
@@ -1419,7 +1853,7 @@ class _ClaimScreenState extends State<ClaimScreen> {
   bool isProcessing = false;
   String statusMsg = "Awaiting your claim";
 
-  final String _lifeLineAbi = '[{"inputs":[{"internalType":"uint64","name":"vaultId","type":"uint64"},{"internalType":"bytes32","name":"sigR","type":"bytes32"},{"internalType":"bytes32","name":"sigS","type":"bytes32"},{"internalType":"uint8","name":"sigV","type":"uint8"}],"name":"claimInheritance","outputs":[],"stateMutability":"nonpayable","type":"function"}]';
+  final String _lifeLineAbi = '[{"inputs":[{"internalType":"uint64","name":"vaultId","type":"uint64"}],"name":"getVault","outputs":[{"components":[{"internalType":"address","name":"owner","type":"address"},{"internalType":"address","name":"heirAddress","type":"address"},{"internalType":"bytes32","name":"heirPubkey","type":"bytes32"},{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"balance","type":"uint256"},{"internalType":"uint64","name":"unlockTime","type":"uint64"},{"internalType":"uint64","name":"inactivityDuration","type":"uint64"},{"internalType":"bool","name":"isActive","type":"bool"}],"internalType":"struct LifeLine.Vault","name":"","type":"tuple"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint64","name":"vaultId","type":"uint64"},{"internalType":"bytes32","name":"sigR","type":"bytes32"},{"internalType":"bytes32","name":"sigS","type":"bytes32"},{"internalType":"uint8","name":"sigV","type":"uint8"}],"name":"claimInheritance","outputs":[],"stateMutability":"nonpayable","type":"function"}]';
   final String _erc20Abi = '[{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"type":"function"}, {"constant":true,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"}]';
 
   void _showWalletModal(String privateKeyHex, String vaultId, String tokenAddr) {
@@ -1469,16 +1903,15 @@ class _ClaimScreenState extends State<ClaimScreen> {
       final privateKeyHex = EvmEncryptionService.decryptWithPin(payload.replaceAll(" ", "+"), pinBuffer);
       _showWalletModal(privateKeyHex, vaultIdStr ?? "1", tokenAddr!);
     } catch (e) {
+      debugPrint('🔥 TRACE: Decrypt Link Error: $e');
       setState(() { statusMsg = e.toString().contains("INVALID_PIN") ? "Error: Invalid 6-Digit PIN." : "Error: ${e.toString().replaceAll("Exception:", "").trim()}"; isProcessing = false; pinBuffer = ""; filled = 0; });
     }
   }
 
   Future<void> _executeOnChainClaim(String privateKeyHex, String vaultIdStr, String tokenAddr) async {
-    setState(() { isProcessing = true; statusMsg = "Connecting to your wallet..."; });
     try {
       final wallet = context.read<CeloWalletProvider>();
       
-      // Auto reconnect via current provider if missing (Assuming wallet injected via ClaimScreen execution context)
       if (!wallet.isConnected) {
         await wallet.connectProvider(ethereum, context);
       }
@@ -1487,36 +1920,83 @@ class _ClaimScreenState extends State<ClaimScreen> {
 
       final ephemeralCredentials = EthPrivateKey.fromHex(privateKeyHex);
       final web3client = Web3Client(AppConstants.rpcUrl, http.Client());
-
-      setState(() => statusMsg = "Unlocking Vault on Celo...");
       final llContract = DeployedContract(ContractAbi.fromJson(_lifeLineAbi, 'LifeLine'), EthereumAddress.fromHex(AppConstants.lifeLineContract, enforceEip55: false));
-      final claimFunc = llContract.function('claimInheritance');
-
-      final claimTx = await web3client.sendTransaction(
-        ephemeralCredentials,
-        Transaction.callContract(contract: llContract, function: claimFunc, parameters: [BigInt.parse(vaultIdStr), Uint8List(32), Uint8List(32), BigInt.zero]),
-        chainId: AppConstants.chainId,
-      );
-      debugPrint('🔥 TRACE: Claimed! Tx: $claimTx');
-      
-      setState(() => statusMsg = "Sweeping funds to your wallet...");
-      await Future.delayed(const Duration(seconds: 4)); 
-
       final erc20 = DeployedContract(ContractAbi.fromJson(_erc20Abi, 'ERC20'), EthereumAddress.fromHex(tokenAddr, enforceEip55: false));
+
+      setState(() => statusMsg = "Checking Vault Status...");
+      final vaultRes = await web3client.call(contract: llContract, function: llContract.function('getVault'), params: [BigInt.parse(vaultIdStr)]);
+      final vaultData = vaultRes.first as List<dynamic>;
+      final isActive = vaultData[7] as bool;
+      
       final balanceOfFunc = erc20.function('balanceOf');
       final balRes = await web3client.call(contract: erc20, function: balanceOfFunc, params: [ephemeralCredentials.address]);
-      final sweepAmount = balRes.first as BigInt;
+      BigInt sweepAmount = balRes.first as BigInt;
 
-      final transferFunc = erc20.function('transfer');
-      final sweepTx = await web3client.sendTransaction(
-        ephemeralCredentials,
-        Transaction.callContract(contract: erc20, function: transferFunc, parameters: [EthereumAddress.fromHex(wallet.userAddress!, enforceEip55: false), sweepAmount]),
-        chainId: AppConstants.chainId,
-      );
-      debugPrint('🔥 TRACE: Swept! Tx: $sweepTx');
+      if (!isActive && sweepAmount == BigInt.zero) {
+        throw Exception("This vault has already been fully claimed and swept to your wallet.");
+      }
+
+      if (isActive) {
+        setState(() => statusMsg = "Unlocking Vault on Celo...");
+        final claimFunc = llContract.function('claimInheritance');
+
+        final claimTx = await web3client.sendTransaction(
+          ephemeralCredentials,
+          Transaction.callContract(contract: llContract, function: claimFunc, parameters: [BigInt.parse(vaultIdStr), Uint8List(32), Uint8List(32), BigInt.zero]),
+          chainId: AppConstants.chainId,
+        );
+        debugPrint('🔥 TRACE: Claimed successfully! Tx: $claimTx');
+        
+        setState(() => statusMsg = "Waiting for block confirmation...");
+        await Future.delayed(const Duration(seconds: 4)); 
+
+        final updatedBalRes = await web3client.call(contract: erc20, function: balanceOfFunc, params: [ephemeralCredentials.address]);
+        sweepAmount = updatedBalRes.first as BigInt;
+      } else {
+        debugPrint('🔥 TRACE: Vault already unlocked on contract. Direct recovery initiated.');
+      }
+
+      setState(() => statusMsg = "Sweeping funds to your wallet...");
+
+      if (tokenAddr.toLowerCase() == AppConstants.tokens['CELO']!['address'].toLowerCase()) {
+        final gasPrice = await web3client.getGasPrice();
+        final exactGasCost = gasPrice.getInWei * BigInt.from(21000); 
+
+        if (sweepAmount > exactGasCost) {
+          final exactSweepAmount = sweepAmount - exactGasCost;
+          debugPrint('🔥 TRACE: Type 0 Exact Sweep. Cost: $exactGasCost, Sweeping: $exactSweepAmount Wei');
+          
+          final sweepTx = await web3client.sendTransaction(
+            ephemeralCredentials,
+            Transaction(
+              to: EthereumAddress.fromHex(wallet.userAddress!, enforceEip55: false),
+              value: EtherAmount.inWei(exactSweepAmount),
+              maxGas: 21000, 
+              gasPrice: gasPrice, 
+            ),
+            chainId: AppConstants.chainId,
+          );
+          debugPrint('🔥 TRACE: Native Recovery Sweep Complete! Tx: $sweepTx');
+        } else {
+          throw Exception("Insufficient balance to cover exact transfer network fees.");
+        }
+      } else {
+        final transferFunc = erc20.function('transfer');
+        final sweepTx = await web3client.sendTransaction(
+          ephemeralCredentials,
+          Transaction.callContract(
+            contract: erc20, 
+            function: transferFunc, 
+            parameters: [EthereumAddress.fromHex(wallet.userAddress!, enforceEip55: false), sweepAmount]
+          ),
+          chainId: AppConstants.chainId,
+        );
+        debugPrint('🔥 TRACE: ERC20 Recovery Sweep Complete! Tx: $sweepTx');
+      }
 
       setState(() { statusMsg = "CLAIM SUCCESSFUL ✓"; isProcessing = false; });
     } catch (e) {
+      debugPrint('🔥 TRACE: On-Chain Claim Error: $e'); 
       setState(() { statusMsg = "Error: ${e.toString().replaceAll("Exception:", "").trim()}"; isProcessing = false; pinBuffer = ""; filled = 0; });
     }
   }
@@ -1548,7 +2028,20 @@ class _ClaimScreenState extends State<ClaimScreen> {
                   Row(mainAxisAlignment: MainAxisAlignment.center, children: List.generate(6, (i) => AnimatedContainer(duration: const Duration(milliseconds: 150), margin: const EdgeInsets.symmetric(horizontal: 6), width: 16, height: 16, decoration: BoxDecoration(color: i < filled ? AppTheme.green : AppTheme.card2, border: Border.all(color: i < filled ? AppTheme.green : AppTheme.border), shape: BoxShape.circle)))),
                   const SizedBox(height: 32),
                   if (isProcessing) const CircularProgressIndicator(color: AppTheme.green)
-                  else Container(padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 10), child: GridView.count(shrinkWrap: true, crossAxisCount: 3, crossAxisSpacing: 16, mainAxisSpacing: 16, childAspectRatio: 2.2, physics: const NeverScrollableScrollPhysics(), children: ["1","2","3","4","5","6","7","8","9","del","0","ok"].map((k) => GestureDetector(onTap: () => handleKey(k), child: Container(decoration: BoxDecoration(color: k == "ok" ? AppTheme.green : AppTheme.card2, border: Border.all(color: k == "ok" ? AppTheme.green : AppTheme.border), borderRadius: BorderRadius.circular(14)), child: Center(child: k == "del" ? const Icon(LucideIcons.delete, size: 22, color: AppTheme.muted) : k == "ok" ? const Icon(LucideIcons.arrowRight, size: 24, color: AppTheme.bg) : Text(k, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w500)))))).toList())),
+                  else Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 320),
+                      child: GridView.count(shrinkWrap: true, crossAxisCount: 3, crossAxisSpacing: 16, mainAxisSpacing: 16, childAspectRatio: 2.2, physics: const NeverScrollableScrollPhysics(), children: ["1","2","3","4","5","6","7","8","9","del","0","ok"].map((k) => 
+                        MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: GestureDetector(
+                            onTap: () => handleKey(k), 
+                            child: Container(decoration: BoxDecoration(color: k == "ok" ? AppTheme.green : AppTheme.card2, border: Border.all(color: k == "ok" ? AppTheme.green : AppTheme.border), borderRadius: BorderRadius.circular(14)), child: Center(child: k == "del" ? const Icon(LucideIcons.delete, size: 22, color: AppTheme.muted) : k == "ok" ? const Icon(LucideIcons.arrowRight, size: 24, color: AppTheme.bg) : Text(k, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w500))))
+                          )
+                        )
+                      ).toList()),
+                    ),
+                  ),
                   const SizedBox(height: 30),
                 ],
               ),
